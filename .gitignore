@@ -1,0 +1,6 @@
+# Plaintext-Secrets — NIE committen (nur .env.gpg ist versioniert)
+.env
+.env.*           # .env.local, .env.production etc. — alle Klartext-Varianten
+!.env.example    # Vorlage MIT committen (keine echten Werte)
+!.env.gpg        # verschlüsselt — committet
+*.plain
