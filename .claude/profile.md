@@ -4,7 +4,7 @@ domains: []
 build: "true"
 test: "true"
 lint: "true"
-db_dialect: none
+db_dialect: sqlite
 companions: []
 frameworks: []
 merge_policy: direct
