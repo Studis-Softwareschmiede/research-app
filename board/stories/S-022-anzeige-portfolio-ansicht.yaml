@@ -1,0 +1,28 @@
+id: S-022
+parent: F-006
+title: 'Portfolio-Ansicht: alle Themen mit Status, letzter Bewertung (+ Momentum), offenen Meilensteinen'
+status: To Do
+priority: P2
+spec: docs/specs/anzeige-portfolio.md
+implements:
+- AC1
+depends:
+- S-021
+- S-002
+- S-005
+labels:
+- ui
+size_est: M
+dispo_est: null
+dispo_act: null
+dispo_forecast: null
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=1 (AC1) + n_comp=4 (Themen-Liste-View, Status-Anzeige, letzte Bewertung + Momentum-Kennzeichen, offene Meilensteine) + ui-Label +1 = Score 6 -> M.'
+confidence: low
+tok_est: null
+branch: null
+pr: null
+blocked_reason: null
+abgenommen_at: null
+created_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-26T20:00:00Z'
+done_at: null

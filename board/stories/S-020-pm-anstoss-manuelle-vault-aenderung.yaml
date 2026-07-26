@@ -1,0 +1,25 @@
+id: S-020
+parent: F-005
+title: 'Manuelle Vault-Aenderung: Hash-Mismatch gegen Vorlauf-Stand loest Rueckfrage aus statt still zu ueberschreiben'
+status: To Do
+priority: P1
+spec: docs/specs/gate-pm-anstoss.md
+implements:
+- AC6
+depends:
+- S-018
+labels: null
+size_est: S
+dispo_est: null
+dispo_act: null
+dispo_forecast: null
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=1 (AC6) + n_comp=2 (Hash-Vergleich gegen erwarteten Vorlauf-Stand, Rueckfrage statt stillem Ueberschreiben) = Score 3 -> S.'
+confidence: low
+tok_est: null
+branch: null
+pr: null
+blocked_reason: null
+abgenommen_at: null
+created_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-26T20:00:00Z'
+done_at: null

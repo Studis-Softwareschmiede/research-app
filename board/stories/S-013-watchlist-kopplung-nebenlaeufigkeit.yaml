@@ -1,0 +1,27 @@
+id: S-013
+parent: F-004
+title: 'Watchlist-Kopplung: externe Meilensteine ueber last30days-Delta pruefen, gegen Themen-Sperre serialisiert'
+status: To Do
+priority: P1
+spec: docs/specs/wiedervorlage-meilensteine.md
+implements:
+- AC2
+- AC6
+depends:
+- S-005
+- S-006
+labels: null
+size_est: M
+dispo_est: null
+dispo_act: null
+dispo_forecast: null
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=2 (AC2,AC6) + n_comp=4 (Watchlist-Pass, Watchlist-Referenz, last30days-Delta-Signal-Konsum, Lock-Serialisierung BR-019) = Score 6 -> M.'
+confidence: low
+tok_est: null
+branch: null
+pr: null
+blocked_reason: null
+abgenommen_at: null
+created_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-26T20:00:00Z'
+done_at: null

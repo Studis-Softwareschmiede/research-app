@@ -1,0 +1,27 @@
+id: S-004
+parent: F-002
+title: 'Divergenz-Berechnung: ra_divergence mit Empfehlungs-Wechsel, SWOT-Item-Delta + Rollup, Meilenstein-Delta'
+status: To Do
+priority: P0
+spec: docs/specs/research-datenmodell.md
+implements:
+- AC3
+depends:
+- S-003
+- S-005
+labels:
+- db
+size_est: L
+dispo_est: null
+dispo_act: null
+dispo_forecast: null
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=1 (AC3) + n_comp=7 (ra_divergence-Tabelle, Empfehlungs-Wechsel, SWOT-Item-Delta (category,claim_key), Kategorie-Rollup, Meilenstein-Status-Delta, is_empty-Flag, Materialisierung je Folgelauf) + db-Label +1 = Score 9 -> L.'
+confidence: low
+tok_est: null
+branch: null
+pr: null
+blocked_reason: null
+abgenommen_at: null
+created_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-26T20:00:00Z'
+done_at: null

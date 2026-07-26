@@ -1,0 +1,27 @@
+id: S-018
+parent: F-005
+title: 'Idempotenz: UNIQUE(topic_id,result_hash) verhindert Doppel-Artefakt, gefahrloser Neustart nach Abbruch'
+status: To Do
+priority: P1
+spec: docs/specs/gate-pm-anstoss.md
+implements:
+- AC3
+- AC5
+depends:
+- S-017
+- S-003
+labels: null
+size_est: M
+dispo_est: null
+dispo_act: null
+dispo_forecast: null
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=2 (AC3,AC5) + n_comp=3 (UNIQUE(topic_id,result_hash) BR-017, keine-Divergenz-Protokoll, Restart-Sicherheit ohne halb-aktuellen Stand) = Score 5 -> M.'
+confidence: low
+tok_est: null
+branch: null
+pr: null
+blocked_reason: null
+abgenommen_at: null
+created_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-26T20:00:00Z'
+done_at: null

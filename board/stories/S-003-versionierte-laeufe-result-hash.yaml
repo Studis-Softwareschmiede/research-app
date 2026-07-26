@@ -1,0 +1,26 @@
+id: S-003
+parent: F-002
+title: 'Versionierte Laeufe: ra_run mit monotoner Version je (Thema,Art) und deterministischem result_hash'
+status: To Do
+priority: P0
+spec: docs/specs/research-datenmodell.md
+implements:
+- AC2
+depends:
+- S-001
+labels:
+- db
+size_est: M
+dispo_est: null
+dispo_act: null
+dispo_forecast: null
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=1 (AC2) + n_comp=3 (ra_run-Tabelle, Versions-Zaehler je (Thema,Art), result_hash-Bildungsregel data-model 5) + db-Label +1 = Score 5 -> M.'
+confidence: low
+tok_est: null
+branch: null
+pr: null
+blocked_reason: null
+abgenommen_at: null
+created_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-26T20:00:00Z'
+done_at: null

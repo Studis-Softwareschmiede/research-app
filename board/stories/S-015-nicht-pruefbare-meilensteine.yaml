@@ -1,0 +1,25 @@
+id: S-015
+parent: F-004
+title: 'Nicht pruefbare Meilensteine: extern nicht automatisch pruefbar bleibt sichtbar als manuell zu pruefen'
+status: To Do
+priority: P1
+spec: docs/specs/wiedervorlage-meilensteine.md
+implements:
+- AC4
+depends:
+- S-013
+labels: null
+size_est: S
+dispo_est: null
+dispo_act: null
+dispo_forecast: null
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=1 (AC4) + n_comp=1 (manuell-zu-pruefen-Markierung ohne stille Nicht-Pruefung) = Score 2 -> S.'
+confidence: low
+tok_est: null
+branch: null
+pr: null
+blocked_reason: null
+abgenommen_at: null
+created_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-26T20:00:00Z'
+done_at: null

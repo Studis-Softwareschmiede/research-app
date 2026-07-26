@@ -1,0 +1,27 @@
+id: S-024
+parent: F-006
+title: 'Klickbare Gates: anstehende Entscheidungs-Gates bedienbar (PM anstossen/warten) ueber die Schicht-1-Schnittstelle'
+status: To Do
+priority: P2
+spec: docs/specs/anzeige-portfolio.md
+implements:
+- AC3
+depends:
+- S-021
+- S-016
+labels:
+- ui
+size_est: M
+dispo_est: null
+dispo_act: null
+dispo_forecast: null
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=1 (AC3) + n_comp=3 (Gate-Liste-View, Gate-Aktion-Button, Schicht-1-Schnittstelle-Aufruf nie daran vorbei) + ui-Label +1 = Score 5 -> M.'
+confidence: low
+tok_est: null
+branch: null
+pr: null
+blocked_reason: null
+abgenommen_at: null
+created_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-26T20:00:00Z'
+done_at: null

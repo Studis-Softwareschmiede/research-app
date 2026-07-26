@@ -1,0 +1,26 @@
+id: S-001
+parent: F-002
+title: 'DB-Grundgeruest: Migrationen, STRICT/WAL/foreign_keys, SQLite-Version-Guard, Fremd-Store-Schutz'
+status: To Do
+priority: P0
+spec: docs/specs/research-datenmodell.md
+implements:
+- AC6
+- AC8
+depends: null
+labels:
+- db
+size_est: M
+dispo_est: null
+dispo_act: null
+dispo_forecast: null
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=2 (AC6,AC8) + n_comp=3 (db_scripts/NNN-Migrationen, Data-Access-Modul + separates research-app.sqlite, read-only ATTACH last30days + Version-Guard >=3.51.3) + db-Label +1 = Score 6 -> M.'
+confidence: low
+tok_est: null
+branch: null
+pr: null
+blocked_reason: null
+abgenommen_at: null
+created_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-26T20:00:00Z'
+done_at: null

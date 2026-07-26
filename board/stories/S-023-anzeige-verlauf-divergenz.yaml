@@ -1,0 +1,27 @@
+id: S-023
+parent: F-006
+title: 'Verlauf & Divergenz-Ansicht: Lauf-Verlauf je Thema, Divergenz zwischen zwei waehlbaren Laeufen aus ra_divergence'
+status: To Do
+priority: P2
+spec: docs/specs/anzeige-portfolio.md
+implements:
+- AC2
+depends:
+- S-021
+- S-004
+labels:
+- ui
+size_est: M
+dispo_est: null
+dispo_act: null
+dispo_forecast: null
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=1 (AC2) + n_comp=4 (Lauf-Verlauf-View, Divergenz-Ansicht, Zwei-Lauf-Auswahl, ra_divergence-Render ohne Freitext) + ui-Label +1 = Score 6 -> M.'
+confidence: low
+tok_est: null
+branch: null
+pr: null
+blocked_reason: null
+abgenommen_at: null
+created_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-26T20:00:00Z'
+done_at: null

@@ -1,0 +1,28 @@
+id: S-007
+parent: F-003
+title: '/research-Skill-Grundgeruest: Discovery-/Thema-Modus, last30days-Aufruf, Persistenz, Quellen-Resilienz'
+status: To Do
+priority: P1
+spec: docs/specs/research-skill.md
+implements:
+- AC1
+- AC6
+- AC7
+depends:
+- S-002
+- S-003
+labels: null
+size_est: L
+dispo_est: null
+dispo_act: null
+dispo_forecast: null
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=3 (AC1,AC6,AC7) + n_comp=5 (Skill-Scaffold skills/research/, Discovery-Modus, Thema-Modus, last30days-Invocation --emit=json/--save-dir/--store, Persistenz ueber Data-Access + Quellen-Resilienz) = Score 8 -> L.'
+confidence: low
+tok_est: null
+branch: null
+pr: null
+blocked_reason: null
+abgenommen_at: null
+created_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-26T20:00:00Z'
+done_at: null

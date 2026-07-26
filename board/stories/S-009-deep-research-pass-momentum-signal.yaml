@@ -1,0 +1,25 @@
+id: S-009
+parent: F-003
+title: 'Zweite Evidenzquelle: Deep-Research-Pass fuer Fundamentals, Momentum-Signal-Markierung bei Fehlen'
+status: To Do
+priority: P1
+spec: docs/specs/research-skill.md
+implements:
+- AC3
+depends:
+- S-008
+labels: null
+size_est: M
+dispo_est: null
+dispo_act: null
+dispo_forecast: null
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=1 (AC3) + n_comp=3 (Deep-Research-Invocation, momentum_only-Flag, sichtbare Momentum-Markierung ohne Blocking) = Score 4 -> M.'
+confidence: low
+tok_est: null
+branch: null
+pr: null
+blocked_reason: null
+abgenommen_at: null
+created_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-26T20:00:00Z'
+done_at: null

@@ -1,0 +1,26 @@
+id: S-005
+parent: F-002
+title: 'Meilenstein-Entitaet: Status offen/erfuellt/hinfaellig, Zustaendigkeit extern/eigen, Watchlist-Ref-Pflicht'
+status: To Do
+priority: P0
+spec: docs/specs/research-datenmodell.md
+implements:
+- AC4
+depends:
+- S-001
+labels:
+- db
+size_est: M
+dispo_est: null
+dispo_act: null
+dispo_forecast: null
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=1 (AC4) + n_comp=3 (ra_milestone-Tabelle, Status-/Zustaendigkeits-Enums, Watchlist-Referenz-Pflicht bei extern) + db-Label +1 = Score 5 -> M.'
+confidence: low
+tok_est: null
+branch: null
+pr: null
+blocked_reason: null
+abgenommen_at: null
+created_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-26T20:00:00Z'
+done_at: null

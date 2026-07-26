@@ -1,0 +1,12 @@
+- id: datenschicht
+  name: Datenschicht
+  description: 'SQLite-Fundament: Themen, Laeufe, Hashes, Divergenz, Meilensteine, Migrationen, Nebenlaeufigkeit (M1).'
+  order: 1
+- id: research-logik
+  name: Research-Logik
+  description: 'Schicht-1-Orchestrierung: /research-Skill, SWOT-Judge, Wiedervorlage und PM-Anstoss-Gate (M2-M4).'
+  order: 2
+- id: anzeige
+  name: Anzeige
+  description: 'Eigenstaendige Lese-Oberflaeche: Portfolio, Verlauf, Divergenz-Ansicht, klickbare Gates (M5).'
+  order: 3

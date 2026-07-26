@@ -1,0 +1,26 @@
+id: S-010
+parent: F-003
+title: 'Empfehlungs-Kopplung: Empfehlung aus Meilenstein-Status abgeleitet und begruendet (nicht nur Judge)'
+status: To Do
+priority: P1
+spec: docs/specs/research-skill.md
+implements:
+- AC4
+depends:
+- S-008
+- S-005
+labels: null
+size_est: S
+dispo_est: null
+dispo_act: null
+dispo_forecast: null
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=1 (AC4) + n_comp=2 (Ableitungsregel Meilenstein-Status->Empfehlung data-model 8, Begruendungs-Ausweis) = Score 3 -> S.'
+confidence: low
+tok_est: null
+branch: null
+pr: null
+blocked_reason: null
+abgenommen_at: null
+created_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-26T20:00:00Z'
+done_at: null
