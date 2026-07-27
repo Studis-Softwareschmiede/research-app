@@ -2,7 +2,9 @@
 # run_tests.sh — Self-Test fuer skills/research/ (/research-Skill-Grundgeruest,
 # S-007: Discovery-/Thema-Modus, last30days-Aufruf, Persistenz ueber die
 # Data-Access-Schicht, Quellen-Resilienz; S-011: Voraussetzungs-Ueberblick --
-# Meilenstein-Liste je Thema + Schutzrechte-Klaerungspunkt).
+# Meilenstein-Liste je Thema + Schutzrechte-Klaerungspunkt; S-008:
+# Bewertungsschicht-Anzeige -- SWOT-Zusammenfassung + Empfehlung +
+# Businessplan-Template).
 #
 # Rein mechanisches Shell-Test-Artefakt (M2-Grundgeruest, kein App-Layer im
 # profile.md-Sinn -- language: md). Erfuellt die Spec-Vertragszeile "Tests
@@ -11,7 +13,16 @@
 #
 # Covers (research-skill): AC1 (Zwei Modi discovery/thema, last30days-Aufruf
 # ueber --emit=json/--save-dir/--store, last30days_client.sh
-# resolve/invoke-Funktionen), AC5 (Voraussetzungs-Ueberblick, S-011:
+# resolve/invoke-Funktionen), AC2 (Bewertungsschicht-Anzeige, S-008:
+# orchestrator.sh#print_swot_summary/print_recommendation/
+# print_businessplan_template/render_evaluation -- rendern den bereits ueber
+# db_scripts/lib/swot_item.sh#create_swot_item + db_scripts/lib/run.sh#create_run
+# persistierten Stand eines Laufs; Businessplan-Template erscheint nur bei
+# `recommendation=weiterverfolgen` (BR-107); main()-Subbefehl `evaluation
+# <run-id>` ist der reachability-Pfad, AC2-Bewertung selbst -- claim_key-
+# Vokabular/E2-Zurueckweisung, UNIQUE/CASCADE -- wird in
+# db_scripts/tests/run_tests.sh getestet, hier NUR die Anzeige-Verdrahtung),
+# AC5 (Voraussetzungs-Ueberblick, S-011:
 # db_scripts/lib/milestone.sh#create_milestone/list_milestones/
 # set_milestone_status -- Meilenstein-Liste je Thema erzeugen/aktualisieren,
 # Status+Zustaendigkeit extern/eigen inkl. Watchlist-Ref-Pflicht bei extern;
@@ -50,6 +61,10 @@ source "$REPO_ROOT/db_scripts/lib/topic.sh"
 source "$REPO_ROOT/db_scripts/lib/topic_lock.sh"
 # shellcheck source=../../../db_scripts/lib/milestone.sh
 source "$REPO_ROOT/db_scripts/lib/milestone.sh"
+# shellcheck source=../../../db_scripts/lib/run.sh
+source "$REPO_ROOT/db_scripts/lib/run.sh"
+# shellcheck source=../../../db_scripts/lib/swot_item.sh
+source "$REPO_ROOT/db_scripts/lib/swot_item.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -478,6 +493,79 @@ if RA_LAST30DAYS_CMD="$FAKE_L30D" FAKE_L30D_JSON_FILE="$TEST_DIR/fixtures/thema_
   fi
 else
   bad "research_thema (AC5-E2E) schlug unerwartet fehl: $(cat "$OUT_AC5_E2E" 2>/dev/null)"
+fi
+
+echo "== @trace research-skill#AC2 -- print_swot_summary: leer + gruppiert nach Kategorie =="
+DB9="$(new_migrated_db "$TMP/ac2-swot.sqlite")"
+TOPIC9="$(create_topic "$DB9" "AC2-Thema")"
+HASH9_EMPTY="$(compute_result_hash "parken" "" "")"
+RUN9_EMPTY="$(create_run "$DB9" "$TOPIC9" "recherche" "$HASH9_EMPTY" "parken" 1 0)"
+RUN9_EMPTY_ID="${RUN9_EMPTY%%|*}"
+SWOT_EMPTY_OUT="$(print_swot_summary "$DB9" "$RUN9_EMPTY_ID")"
+if echo "$SWOT_EMPTY_OUT" | grep -qi "Noch keine SWOT-Items"; then
+  ok "print_swot_summary zeigt ohne SWOT-Items einen klaren Leer-Hinweis"
+else
+  bad "unerwartete Ausgabe ohne SWOT-Items: $SWOT_EMPTY_OUT"
+fi
+
+create_swot_item "$DB9" "$RUN9_EMPTY_ID" "strength" "marktgroesse" "last30days" > /dev/null
+create_swot_item "$DB9" "$RUN9_EMPTY_ID" "threat" "wettbewerbsintensitaet" "last30days" > /dev/null
+create_swot_item "$DB9" "$RUN9_EMPTY_ID" "threat" "regulierung" "deep_research" > /dev/null
+SWOT_FULL_OUT="$(print_swot_summary "$DB9" "$RUN9_EMPTY_ID")"
+if echo "$SWOT_FULL_OUT" | grep -A1 "^Staerken:" | grep -q "marktgroesse" \
+  && echo "$SWOT_FULL_OUT" | grep -A1 "^Schwaechen:" | grep -q "(keine)" \
+  && echo "$SWOT_FULL_OUT" | grep -A2 "^Risiken:" | grep -q "regulierung" \
+  && echo "$SWOT_FULL_OUT" | grep -A2 "^Risiken:" | grep -q "wettbewerbsintensitaet"; then
+  ok "print_swot_summary gruppiert persistierte SWOT-Items nach Kategorie, leere Kategorien zeigen '(keine)'"
+else
+  bad "unerwartete Ausgabe mit SWOT-Items: $SWOT_FULL_OUT"
+fi
+
+echo "== @trace research-skill#AC2,BR-107 -- print_recommendation: Businessplan-Template NUR bei 'weiterverfolgen' =="
+HASH9_WV="$(compute_result_hash "weiterverfolgen" "" "")"
+RUN9_WV="$(create_run "$DB9" "$TOPIC9" "recherche" "$HASH9_WV" "weiterverfolgen" 1 0)"
+RUN9_WV_ID="${RUN9_WV%%|*}"
+REC_WV_OUT="$(print_recommendation "$DB9" "$RUN9_WV_ID")"
+if echo "$REC_WV_OUT" | grep -q "Empfehlung: weiterverfolgen" \
+  && echo "$REC_WV_OUT" | grep -q "Businessplan-Template"; then
+  ok "recommendation='weiterverfolgen': Businessplan-Template wird ausgegeben (BR-107)"
+else
+  bad "erwartete Empfehlung + Businessplan-Template, bekam: $REC_WV_OUT"
+fi
+
+HASH9_PARK="$(compute_result_hash "parken" "" "" 2>/dev/null)"
+RUN9_PARK="$(create_run "$DB9" "$TOPIC9" "recherche" "$HASH9_PARK" "parken" 0 1)"
+RUN9_PARK_ID="${RUN9_PARK%%|*}"
+REC_PARK_OUT="$(print_recommendation "$DB9" "$RUN9_PARK_ID")"
+if echo "$REC_PARK_OUT" | grep -q "Empfehlung: parken (Momentum-Signal" \
+  && ! echo "$REC_PARK_OUT" | grep -q "Businessplan-Template"; then
+  ok "recommendation='parken' + momentum_only=1: Momentum-Hinweis, KEIN Businessplan-Template (coder/R01, BR-107 nur bei weiterverfolgen)"
+else
+  bad "erwartete Momentum-Hinweis ohne Businessplan-Template, bekam: $REC_PARK_OUT"
+fi
+
+echo "== @trace research-skill#AC2 -- render_evaluation/main('evaluation'): SWOT + Empfehlung als ein Block =="
+create_swot_item "$DB9" "$RUN9_WV_ID" "opportunity" "kundennachfrage" "last30days" > /dev/null
+EVAL_OUT="$(RA_DB_PATH="$DB9" main evaluation "$RUN9_WV_ID")"
+if echo "$EVAL_OUT" | grep -q "Bewertungsschicht (research-skill#AC2)" \
+  && echo "$EVAL_OUT" | grep -q "SWOT (strukturiert, BR-012)" \
+  && echo "$EVAL_OUT" | grep -q "kundennachfrage" \
+  && echo "$EVAL_OUT" | grep -q "Empfehlung: weiterverfolgen" \
+  && echo "$EVAL_OUT" | grep -q "Businessplan-Template"; then
+  ok "main('evaluation', <run-id>) rendert SWOT-Zusammenfassung + Empfehlung + Businessplan-Template ueber render_evaluation"
+else
+  bad "unerwartete evaluation-Ausgabe: $EVAL_OUT"
+fi
+
+echo "== @trace research-skill#AC2,security/R03 -- render_evaluation lehnt eine ungueltige run-id ab =="
+set +e
+BAD_EVAL_OUT="$(render_evaluation "$DB9" "abc; DROP TABLE ra_run;--" 2> "$TMP/eval-bad.err")"
+BAD_EVAL_RC=$?
+set -e
+if [ "$BAD_EVAL_RC" -ne 0 ] && [ -z "$BAD_EVAL_OUT" ]; then
+  ok "render_evaluation weist eine nicht-numerische run-id ab, bevor irgendeine Data-Access-Funktion sie interpoliert"
+else
+  bad "erwartete Ablehnung, rc=$BAD_EVAL_RC out='$BAD_EVAL_OUT'"
 fi
 
 echo

@@ -216,3 +216,29 @@ SQL
   echo "$out"
   return 0
 }
+
+# get_run <db-path> <run-id>
+# Reine Lesefunktion (kein PRAGMA foreign_keys noetig, SELECT-only): gibt
+# "recommendation|momentum_only" fuer einen bestehenden Lauf aus (S-008,
+# orchestrator.sh#print_recommendation -- Bewertungsschicht-Anzeige im Brief,
+# research-skill#AC2). Bricht mit FATAL auf stderr ab (rc=1), wenn die run_id kein
+# gueltiges Format hat oder kein Lauf mit dieser ID existiert.
+get_run() {
+  local db="$1"
+  local run_id="$2"
+
+  if ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
+    echo "FATAL: run_id '$run_id' ist keine gueltige Ganzzahl -- Abfrage abgelehnt vor jeder SQL-Interpolation (security/R03)." >&2
+    return 1
+  fi
+
+  local row
+  row="$(sqlite3 -separator '|' "$db" "SELECT recommendation, momentum_only FROM ra_run WHERE id = $run_id;")"
+  if [ -z "$row" ]; then
+    echo "FATAL: Lauf '$run_id' existiert nicht." >&2
+    return 1
+  fi
+
+  echo "$row"
+  return 0
+}

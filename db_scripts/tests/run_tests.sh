@@ -4,7 +4,8 @@
 # result_hash, S-003 + ra_milestone: Status/Zustaendigkeit/Watchlist-Ref-Pflicht,
 # S-005 + ra_divergence: Divergenz-Berechnung + Materialisierung, S-004 +
 # ra_topic_lock: Advisory-Serialisierungssperre je Thema, S-006 + Parken-Gate auf
-# EXTERNE Meilensteine verschaerft, S-012).
+# EXTERNE Meilensteine verschaerft, S-012 + ra_swot_item: strukturierte SWOT-Items +
+# kontrolliertes claim_key-Vokabular, S-008).
 #
 # Rein mechanisches SQL/Shell-Test-Artefakt (M1 ist sprach-neutral, kein App-Layer
 # existiert -- profile.md: language: md). Erfuellt die Spec-Vertragszeile
@@ -42,6 +43,14 @@
 # parallelen OS-Prozessen (Watchlist-Job + /research-Lauf simuliert) auf dasselbe
 # Thema), AC8 (Fremd-Store-Schutz, aus S-001).
 #
+# Covers (research-skill): AC2 (ra_swot_item, S-008 -- 007_ra_swot_item.sql: category/
+# evidence_source als rohe CHECK-Constraints, claim_key nicht-leer, UNIQUE(run_id,
+# category,claim_key), ON DELETE CASCADE via ra_run; db_scripts/lib/swot_item.sh:
+# create_swot_item/list_swot_items, kontrolliertes claim_key-Vokabular (BR-012/OF-06)
+# inkl. Normalisierung (trim+lowercase) + Zurueckweisung ausserhalb des Vokabulars als
+# "unmapped" ohne Persistenz (E2), security/R03 vor jeder SQL-Interpolation;
+# db_scripts/lib/run.sh#get_run als Lesefunktion fuer die Bewertungsschicht-Anzeige).
+#
 # Aufruf: db_scripts/tests/run_tests.sh
 set -euo pipefail
 
@@ -61,6 +70,8 @@ source "$DB_SCRIPTS_DIR/lib/run.sh"
 source "$DB_SCRIPTS_DIR/lib/divergence.sh"
 # shellcheck source=../lib/topic_lock.sh
 source "$DB_SCRIPTS_DIR/lib/topic_lock.sh"
+# shellcheck source=../lib/swot_item.sh
+source "$DB_SCRIPTS_DIR/lib/swot_item.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -1119,6 +1130,188 @@ if [ "$CONCURRENT_OK_TOTAL" = "$CONCURRENT_ROUNDS" ]; then
   ok "$CONCURRENT_ROUNDS/$CONCURRENT_ROUNDS Runden: unter zwei echten parallelen Schreiber-Prozessen (Watchlist-Job + /research-Lauf simuliert, jeweils per '&' als eigener OS-Prozess gestartet) gewinnt in jeder Runde genau einer, nie beide/keiner, nie mehr als 1 Zeile (AC7, BR-019)"
 else
   bad "nur $CONCURRENT_OK_TOTAL/$CONCURRENT_ROUNDS Runden hatten exakt einen Gewinner -- Nebenlaeufigkeits-Serialisierung unzuverlaessig"
+fi
+
+echo "== @trace research-skill#AC2,BR-012 -- ra_swot_item: category/evidence_source-Enum als CHECK-Constraint (roh) =="
+SWOT_TOPIC="$(create_topic "$TOPIC_DB" "SWOT-Thema")"
+SWOT_HASH="$(compute_result_hash "weiterverfolgen" "" "")"
+SWOT_RUN="$(create_run "$TOPIC_DB" "$SWOT_TOPIC" "recherche" "$SWOT_HASH" "weiterverfolgen" 0 1)"
+SWOT_RUN_ID="${SWOT_RUN%%|*}"
+
+BAD_CAT_ERR="$TMP/swot-bad-cat.err"
+if sqlite3 "$TOPIC_DB" "INSERT INTO ra_swot_item (run_id, category, claim_key, evidence_source) VALUES ($SWOT_RUN_ID, 'unbekannt', 'marktgroesse', 'last30days');" 2> "$BAD_CAT_ERR"; then
+  bad "ungueltige category 'unbekannt' wurde NICHT von der CHECK-Constraint abgelehnt (BR-012)"
+else
+  if grep -qi "CHECK constraint failed" "$BAD_CAT_ERR"; then
+    ok "CHECK-Constraint lehnt eine category ausserhalb des Enums ab (BR-012)"
+  else
+    bad "Insert schlug fehl, aber nicht wegen der category-CHECK-Constraint: $(cat "$BAD_CAT_ERR")"
+  fi
+fi
+
+BAD_EVID_ERR="$TMP/swot-bad-evid.err"
+if sqlite3 "$TOPIC_DB" "INSERT INTO ra_swot_item (run_id, category, claim_key, evidence_source) VALUES ($SWOT_RUN_ID, 'strength', 'marktgroesse', 'quelle_x');" 2> "$BAD_EVID_ERR"; then
+  bad "ungueltige evidence_source 'quelle_x' wurde NICHT von der CHECK-Constraint abgelehnt"
+else
+  if grep -qi "CHECK constraint failed" "$BAD_EVID_ERR"; then
+    ok "CHECK-Constraint lehnt evidence_source ausserhalb des Enums ab"
+  else
+    bad "Insert schlug fehl, aber nicht wegen der evidence_source-CHECK-Constraint: $(cat "$BAD_EVID_ERR")"
+  fi
+fi
+
+EMPTY_CLAIM_ERR="$TMP/swot-empty-claim.err"
+if sqlite3 "$TOPIC_DB" "INSERT INTO ra_swot_item (run_id, category, claim_key, evidence_source) VALUES ($SWOT_RUN_ID, 'strength', '   ', 'last30days');" 2> "$EMPTY_CLAIM_ERR"; then
+  bad "leerer/nur-Whitespace claim_key wurde NICHT von der CHECK-Constraint abgelehnt"
+else
+  if grep -qi "CHECK constraint failed" "$EMPTY_CLAIM_ERR"; then
+    ok "CHECK-Constraint lehnt einen leeren claim_key ab"
+  else
+    bad "Insert schlug fehl, aber nicht wegen der claim_key-CHECK-Constraint: $(cat "$EMPTY_CLAIM_ERR")"
+  fi
+fi
+
+echo "== @trace research-skill#AC2,BR-012 -- UNIQUE(run_id,category,claim_key) ist der native Backstop =="
+sqlite3 "$TOPIC_DB" "PRAGMA foreign_keys = ON; INSERT INTO ra_swot_item (run_id, category, claim_key, evidence_source) VALUES ($SWOT_RUN_ID, 'strength', 'marktgroesse', 'last30days');"
+set +e
+DUP_SWOT_ERR="$TMP/swot-dup.err"
+sqlite3 "$TOPIC_DB" "PRAGMA foreign_keys = ON; INSERT INTO ra_swot_item (run_id, category, claim_key, evidence_source) VALUES ($SWOT_RUN_ID, 'strength', 'marktgroesse', 'deep_research');" > /dev/null 2> "$DUP_SWOT_ERR"
+DUP_SWOT_RC=$?
+set -e
+if [ "$DUP_SWOT_RC" -ne 0 ] && grep -qi "UNIQUE" "$DUP_SWOT_ERR"; then
+  ok "doppelter (run_id,category,claim_key) wird per UNIQUE-Constraint abgelehnt (BR-012)"
+else
+  bad "doppelter (run_id,category,claim_key) haette per UNIQUE abgelehnt werden muessen, rc=$DUP_SWOT_RC: $(cat "$DUP_SWOT_ERR")"
+fi
+
+echo "== @trace research-skill#AC2,BR-018 -- ra_swot_item CASCADE-Loeschung mit ra_run =="
+CASCADE_TOPIC="$(create_topic "$TOPIC_DB" "Cascade-SWOT-Thema")"
+CASCADE_HASH="$(compute_result_hash "parken" "" "")"
+CASCADE_RUN="$(create_run "$TOPIC_DB" "$CASCADE_TOPIC" "recherche" "$CASCADE_HASH" "parken" 1 0)"
+CASCADE_RUN_ID="${CASCADE_RUN%%|*}"
+sqlite3 "$TOPIC_DB" "PRAGMA foreign_keys = ON; INSERT INTO ra_swot_item (run_id, category, claim_key, evidence_source) VALUES ($CASCADE_RUN_ID, 'threat', 'wettbewerbsintensitaet', 'last30days');"
+sqlite3 "$TOPIC_DB" "PRAGMA foreign_keys = ON; DELETE FROM ra_run WHERE id = $CASCADE_RUN_ID;"
+CASCADE_REMAINING="$(sqlite3 "$TOPIC_DB" "SELECT COUNT(*) FROM ra_swot_item WHERE run_id = $CASCADE_RUN_ID;")"
+if [ "$CASCADE_REMAINING" = "0" ]; then
+  ok "Loeschen des Laufs kaskadiert auf dessen SWOT-Items (ON DELETE CASCADE, data-model.md §2.3)"
+else
+  bad "nach Loeschen des Laufs haetten keine SWOT-Items mehr uebrig sein sollen, gefunden: $CASCADE_REMAINING"
+fi
+
+echo "== @trace research-skill#AC2,BR-012,OF-06 -- create_swot_item: gueltige Kombination aus category+Vokabular-claim_key wird persistiert =="
+NEW_SWOT_ID="$(create_swot_item "$TOPIC_DB" "$SWOT_RUN_ID" "opportunity" "regulierung" "deep_research" "Neue Foerderrichtlinie" 2> "$TMP/swot-create.err")"
+if [[ "$NEW_SWOT_ID" =~ ^[0-9]+$ ]]; then
+  ok "create_swot_item liefert eine neue SWOT-Item-ID fuer einen Vokabular-Begriff"
+else
+  bad "create_swot_item haette eine ID liefern muessen: '$NEW_SWOT_ID' ($(cat "$TMP/swot-create.err"))"
+fi
+STORED_RATIONALE="$(sqlite3 "$TOPIC_DB" "SELECT rationale FROM ra_swot_item WHERE id = $NEW_SWOT_ID;")"
+if [ "$STORED_RATIONALE" = "Neue Foerderrichtlinie" ]; then
+  ok "rationale (Freitext) wird unveraendert mitgespeichert"
+else
+  bad "erwartete rationale 'Neue Foerderrichtlinie', bekam '$STORED_RATIONALE'"
+fi
+
+echo "== @trace research-skill#AC2,BR-012,OF-06 -- create_swot_item: Normalisierung (Gross-/Kleinschreibung, Whitespace) mappt auf das Vokabular =="
+NORM_SWOT_ID="$(create_swot_item "$TOPIC_DB" "$SWOT_RUN_ID" "weakness" "  TeamKompetenz  " "last30days" 2> "$TMP/swot-norm.err")"
+NORM_STORED_KEY="$(sqlite3 "$TOPIC_DB" "SELECT claim_key FROM ra_swot_item WHERE id = $NORM_SWOT_ID;")"
+if [ "$NORM_STORED_KEY" = "teamkompetenz" ]; then
+  ok "claim_key wird vor der Vokabular-Pruefung getrimmt+kleingeschrieben und normalisiert persistiert (E2-Mapping)"
+else
+  bad "erwartete normalisierten claim_key 'teamkompetenz', bekam '$NORM_STORED_KEY' ($(cat "$TMP/swot-norm.err"))"
+fi
+
+echo "== @trace research-skill#AC2,BR-012,OF-06,E2 -- claim_key ausserhalb des Vokabulars wird als 'unmapped' zurueckgewiesen, nie ein freier Slug persistiert =="
+set +e
+UNMAPPED_OUT="$(create_swot_item "$TOPIC_DB" "$SWOT_RUN_ID" "threat" "ein-frei-erfundener-slug" "last30days" 2> "$TMP/swot-unmapped.err")"
+UNMAPPED_RC=$?
+set -e
+UNMAPPED_ROWS="$(sqlite3 "$TOPIC_DB" "SELECT COUNT(*) FROM ra_swot_item WHERE claim_key = 'ein-frei-erfundener-slug';")"
+if [ "$UNMAPPED_RC" -ne 0 ] && [ -z "$UNMAPPED_OUT" ] && grep -qi "unmapped" "$TMP/swot-unmapped.err" && [ "$UNMAPPED_ROWS" = "0" ]; then
+  ok "claim_key ausserhalb des kontrollierten Vokabulars wird abgelehnt, nichts wird persistiert (BR-012/OF-06/E2)"
+else
+  bad "unbekannter claim_key haette als 'unmapped' abgelehnt werden muessen ohne Persistenz, rc=$UNMAPPED_RC out='$UNMAPPED_OUT' rows=$UNMAPPED_ROWS: $(cat "$TMP/swot-unmapped.err")"
+fi
+
+echo "== @trace research-skill#AC2,BR-012 -- create_swot_item: unbekannte category/evidence_source werden vor der SQL-Interpolation abgelehnt =="
+set +e
+BAD_CAT_OUT="$(create_swot_item "$TOPIC_DB" "$SWOT_RUN_ID" "sonstiges" "regulierung" "last30days" 2>"$TMP/swot-bad-cat-fn.err")"
+BAD_CAT_RC=$?
+set -e
+if [ "$BAD_CAT_RC" -ne 0 ] && [ -z "$BAD_CAT_OUT" ] && grep -qi "BR-012" "$TMP/swot-bad-cat-fn.err"; then
+  ok "create_swot_item lehnt eine unbekannte category vor der SQL-Interpolation ab"
+else
+  bad "unbekannte category haette abgelehnt werden muessen, rc=$BAD_CAT_RC out='$BAD_CAT_OUT'"
+fi
+
+set +e
+BAD_EVID_OUT="$(create_swot_item "$TOPIC_DB" "$SWOT_RUN_ID" "opportunity" "regulierung" "quelle_x" 2>"$TMP/swot-bad-evid-fn.err")"
+BAD_EVID_RC=$?
+set -e
+if [ "$BAD_EVID_RC" -ne 0 ] && [ -z "$BAD_EVID_OUT" ]; then
+  ok "create_swot_item lehnt eine unbekannte evidence_source vor der SQL-Interpolation ab"
+else
+  bad "unbekannte evidence_source haette abgelehnt werden muessen, rc=$BAD_EVID_RC out='$BAD_EVID_OUT'"
+fi
+
+set +e
+BAD_RUNID_OUT="$(create_swot_item "$TOPIC_DB" "1; DROP TABLE ra_swot_item;--" "strength" "regulierung" "last30days" 2>"$TMP/swot-bad-runid.err")"
+BAD_RUNID_RC=$?
+set -e
+SWOT_TABLE_STILL_THERE="$(sqlite3 "$TOPIC_DB" "SELECT name FROM sqlite_master WHERE type='table' AND name='ra_swot_item';")"
+if [ "$BAD_RUNID_RC" -ne 0 ] && [ -z "$BAD_RUNID_OUT" ] && grep -qi "security/R03" "$TMP/swot-bad-runid.err" && [ "$SWOT_TABLE_STILL_THERE" = "ra_swot_item" ]; then
+  ok "manipulierte run_id wird per Formatpruefung abgelehnt, bevor sie ins SQL interpoliert wird (security/R03)"
+else
+  bad "manipulierte run_id haette abgelehnt werden muessen, rc=$BAD_RUNID_RC out='$BAD_RUNID_OUT' table='$SWOT_TABLE_STILL_THERE'"
+fi
+
+echo "== @trace research-skill#AC2 -- list_swot_items liefert (category,claim_key)-Zeilen sortiert, kompatibel zu compute_result_hash/compute_swot_delta =="
+LIST_TOPIC="$(create_topic "$TOPIC_DB" "List-SWOT-Thema")"
+LIST_HASH="$(compute_result_hash "weiterverfolgen" "" "")"
+LIST_RUN="$(create_run "$TOPIC_DB" "$LIST_TOPIC" "recherche" "$LIST_HASH" "weiterverfolgen" 0 1)"
+LIST_RUN_ID="${LIST_RUN%%|*}"
+create_swot_item "$TOPIC_DB" "$LIST_RUN_ID" "threat" "wettbewerbsintensitaet" "last30days" > /dev/null
+create_swot_item "$TOPIC_DB" "$LIST_RUN_ID" "strength" "marktgroesse" "last30days" > /dev/null
+LISTED="$(list_swot_items "$TOPIC_DB" "$LIST_RUN_ID")"
+EXPECTED_LISTED="$(printf 'strength|marktgroesse\nthreat|wettbewerbsintensitaet')"
+if [ "$LISTED" = "$EXPECTED_LISTED" ]; then
+  ok "list_swot_items liefert 'category|claim_key'-Zeilen sortiert nach (category,claim_key)"
+else
+  bad "erwartete '$EXPECTED_LISTED', bekam '$LISTED'"
+fi
+
+LISTED_HASH="$(compute_result_hash "weiterverfolgen" "$LISTED" "")"
+if [[ "$LISTED_HASH" =~ ^[0-9a-f]{64}$ ]]; then
+  ok "list_swot_items-Ausgabe ist direkt als <swot-pairs>-Parameter fuer compute_result_hash verwendbar (run.sh-Datei-Header-Vertrag)"
+else
+  bad "compute_result_hash mit list_swot_items-Ausgabe haette einen gueltigen Hash liefern muessen: '$LISTED_HASH'"
+fi
+
+EMPTY_RUN="$(create_run "$TOPIC_DB" "$LIST_TOPIC" "recherche" "$(compute_result_hash "parken" "" "")" "parken" 1 0)"
+EMPTY_RUN_ID="${EMPTY_RUN%%|*}"
+EMPTY_LIST="$(list_swot_items "$TOPIC_DB" "$EMPTY_RUN_ID")"
+if [ -z "$EMPTY_LIST" ]; then
+  ok "list_swot_items liefert leere Ausgabe fuer einen Lauf ohne SWOT-Items (kein Fehlerfall)"
+else
+  bad "erwartete leere Ausgabe fuer einen Lauf ohne SWOT-Items, bekam '$EMPTY_LIST'"
+fi
+
+echo "== @trace research-skill#AC2 -- get_run liest recommendation+momentum_only fuer die Bewertungsschicht-Anzeige =="
+GET_RUN_OUT="$(get_run "$TOPIC_DB" "$SWOT_RUN_ID" 2> "$TMP/get-run.err")"
+if [ "$GET_RUN_OUT" = "weiterverfolgen|1" ]; then
+  ok "get_run liefert 'recommendation|momentum_only' fuer einen bestehenden Lauf"
+else
+  bad "erwartete 'weiterverfolgen|1', bekam '$GET_RUN_OUT' ($(cat "$TMP/get-run.err"))"
+fi
+
+set +e
+MISSING_RUN_OUT="$(get_run "$TOPIC_DB" "999999" 2> "$TMP/get-run-missing.err")"
+MISSING_RUN_RC=$?
+set -e
+if [ "$MISSING_RUN_RC" -ne 0 ] && [ -z "$MISSING_RUN_OUT" ]; then
+  ok "get_run bricht fuer eine nicht existierende run_id mit FATAL ab"
+else
+  bad "get_run haette fuer eine nicht existierende run_id fehlschlagen sollen: rc=$MISSING_RUN_RC out='$MISSING_RUN_OUT'"
 fi
 
 echo

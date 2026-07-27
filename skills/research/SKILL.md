@@ -1,23 +1,63 @@
 ---
 name: research
-description: Orchestriert eine Themen-Recherche fuer research-app (Discovery- oder Thema-Modus, last30days-Aufruf, Persistenz ueber die Data-Access-Schicht, Voraussetzungs-Ueberblick mit Meilenstein-Liste). M2-Grundgeruest (S-007) + Voraussetzungs-Ueberblick (S-011) -- SWOT/Empfehlung folgen in spaeteren Stories (S-008ff.).
+description: Orchestriert eine Themen-Recherche fuer research-app (Discovery- oder Thema-Modus, last30days-Aufruf, Persistenz ueber die Data-Access-Schicht, Voraussetzungs-Ueberblick mit Meilenstein-Liste, strukturierte SWOT-Bewertung + Empfehlung + Businessplan-Template). M2-Grundgeruest (S-007) + Voraussetzungs-Ueberblick (S-011) + Bewertungsschicht (S-008) -- Deep-Research/Empfehlungs-Kopplung folgen in S-009/S-010.
 ---
 
 # /research — Skill-Grundgerüst (M2, ADR-006)
 
-> Quelle: `docs/specs/research-skill.md` (AC1, AC5, AC6, AC7), `docs/architecture.md`
-> (Komponente "Orchestrator"/"Discovery/Ingest"/"Voraussetzungs-Ueberblick").
-> Projekt-lokal unter `skills/research/` (ADR-006) — keine wiederverwendbare
-> Fabrik-Capability.
+> Quelle: `docs/specs/research-skill.md` (AC1, AC2, AC5, AC6, AC7), `docs/architecture.md`
+> (Komponente "Orchestrator"/"Discovery/Ingest"/"Voraussetzungs-Ueberblick"/
+> "SWOT-Judge"/"Businessplan-Emitter"). Projekt-lokal unter `skills/research/`
+> (ADR-006) — keine wiederverwendbare Fabrik-Capability.
 
-## Zweck (Grundgerüst-Umfang S-007 + Voraussetzungs-Überblick S-011)
+## Zweck (Grundgerüst-Umfang S-007 + Voraussetzungs-Überblick S-011 + Bewertungsschicht S-008)
 
 Startet einen Recherche-Lauf in einem von zwei Modi und legt das dazugehörige
 Thema über die Data-Access-Schicht (`db_scripts/lib/`) an; im Thema-Modus wird
 zusätzlich der aktuelle Voraussetzungs-Überblick (Meilenstein-Liste + fixer
-Schutzrechte-Klärungspunkt) im Brief ausgewiesen (AC5, S-011). SWOT-Judge,
-Deep-Research-Pass und Empfehlung (AC2–AC4) sind **nicht** Teil dieser Story —
-sie folgen in S-008 ff. auf demselben Grundgerüst.
+Schutzrechte-Klärungspunkt) im Brief ausgewiesen (AC5, S-011). Deep-Research-Pass
+und Empfehlungs-Kopplung an den Meilenstein-Status (AC3–AC4) sind **nicht** Teil
+dieser Story — sie folgen in S-009/S-010.
+
+## Bewertungsschicht (AC2, S-008)
+
+Nach dem last30days-Aufruf wertet Claude (der Skill-Ausführende) die Ergebnisse
+aus last30days aus und persistiert die Bewertung — **niemals** per direktem
+SQLite-Zugriff (Boundary-Regel), sondern ausschließlich über die Data-Access-
+Schicht:
+
+1. **SWOT-Judge (strukturiert, BR-012/OF-06):** Für jede belastbare SWOT-Aussage
+   ruft Claude `db_scripts/lib/swot_item.sh#create_swot_item <db> <run-id>
+   <strength|weakness|opportunity|threat> <claim_key> <last30days|deep_research>
+   [rationale]` auf. `claim_key` MUSS ein Begriff aus dem kontrollierten
+   Vokabular sein (`RA_CLAIM_VOCABULARY` in `swot_item.sh`, aktuell Version
+   `v1`) — ein Begriff außerhalb des Vokabulars wird (nach Trim/Kleinschreibung)
+   abgewiesen, **nie** wird ein freier Slug persistiert (E2). Fehlt ein
+   passender Vokabular-Begriff für eine wichtige Beobachtung, ist das eine
+   Lücke im Vokabular selbst (Spec-Präzisierung/neue Version), kein Grund, den
+   Claim wegzulassen oder frei zu benennen.
+2. **Lauf anlegen:** Sobald die SWOT-Items feststehen, bildet Claude den
+   `<swot-pairs>`-Parameter (`category|claim_key`-Zeilen) und ruft
+   `db_scripts/lib/run.sh#compute_result_hash` (mit dem Meilenstein-Stand aus
+   `list_milestones`) und danach `create_run <db> <topic-id> recherche
+   <result_hash> <recommendation> <has_deep_research> <momentum_only>
+   [l30d_source_ref]` auf. **Empfehlung ist hier bewusst kein freier
+   Judge-Entscheid:** Claude orientiert die Wahl von `recommendation` an der in
+   `docs/data-model.md` §8 festgelegten Hybrid-Regel (Meilenstein-Status als
+   Default, begründete Abweichung möglich) — die AUTOMATISCHE, deterministische
+   Ableitungsfunktion selbst folgt erst mit S-010 (AC4/BR-013); bis dahin
+   begründet Claude die Empfehlung im Brief-Freitext explizit anhand des
+   aktuellen Meilenstein-Standes. Bis zum Deep-Research-Pass (S-009, AC3) sind
+   `has_deep_research=0`/`momentum_only=1` (Momentum-Signal, BR-014) die
+   konsistente Kombination.
+3. **SWOT-Items am Lauf verankern:** Erst NACH `create_run` (liefert die
+   `run_id`) ruft Claude `create_swot_item` je Claim mit dieser `run_id` auf.
+4. **Businessplan-Template (BR-107):** Ist `recommendation = weiterverfolgen`,
+   füllt Claude das im Brief gerenderte Businessplan-Template
+   (`orchestrator.sh#print_businessplan_template`) im Freitext aus.
+5. **Brief rendern:** `skills/research/scripts/orchestrator.sh evaluation
+   <run-id>` rendert die SWOT-Zusammenfassung + Empfehlung (inkl.
+   Businessplan-Template bei `weiterverfolgen`) als Teil des Recherche-Briefs.
 
 ## Voraussetzungs-Überblick (AC5, S-011)
 
@@ -44,9 +84,10 @@ sie folgen in S-008 ff. auf demselben Grundgerüst.
   hinterlegte Liste (Status + Zuständigkeit, plus Watchlist-Referenz bei
   `extern`) automatisch im Brief — auch wenn noch kein Meilenstein existiert
   (dann "Noch keine Meilensteine für dieses Thema hinterlegt.").
-- **Discovery-Modus** zeigt bewusst **keinen** Voraussetzungs-Überblick (reine
-  Topthemen-Sichtung, kein Tiefen-Pass je Kandidat — analog zum bisherigen
-  Scope-Schnitt von SWOT/Empfehlung).
+- **Discovery-Modus** zeigt bewusst **keinen** Voraussetzungs-Überblick und legt
+  bewusst **keinen** Lauf/keine SWOT-Bewertung an (reine Topthemen-Sichtung,
+  kein Tiefen-Pass je Kandidat) — die Bewertungsschicht (AC2, `evaluation`-
+  Subbefehl) ist ausschliesslich für den Thema-Modus vorgesehen.
 
 ## Modi (AC1)
 
@@ -64,6 +105,7 @@ Discovery/Ingest und Watchlist rufen last30days auf).
 ```bash
 skills/research/scripts/orchestrator.sh discovery [save-dir]
 skills/research/scripts/orchestrator.sh thema "<Thema-String>" [save-dir]
+skills/research/scripts/orchestrator.sh evaluation <run-id>
 ```
 
 Env-Overrides:

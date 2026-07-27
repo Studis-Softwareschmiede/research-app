@@ -3,24 +3,35 @@
 # Themen-Anlage ueber die Data-Access-Schicht, last30days-Aufruf,
 # Quellen-Resilienz-Brief (research-skill#AC1,AC6,AC7, S-007-Grundgeruest),
 # Voraussetzungs-Ueberblick: Meilenstein-Liste + Schutzrechte-Klaerungspunkt
-# (research-skill#AC5, S-011).
+# (research-skill#AC5, S-011), Bewertungsschicht-Anzeige: SWOT-Zusammenfassung +
+# Empfehlung + Businessplan-Template (research-skill#AC2, S-008).
 #
-# Quelle: docs/specs/research-skill.md AC1/AC5/AC6/AC7 + Edge-Cases E1/E3.
+# Quelle: docs/specs/research-skill.md AC1/AC2/AC5/AC6/AC7 + Edge-Cases E1/E2/E3.
 # docs/architecture.md "Orchestrator"-Komponente (Einstieg; waehlt Modus, ruft
 # Paesse in Reihenfolge) + "Voraussetzungs-Ueberblick"-Komponente
-# ("Klaerungspunkte inkl. Schutzrechte, kein Rechtsmodul"). SWOT-Judge/
-# Deep-Research/Empfehlung (AC2-AC4) sind weiterhin NICHT Teil dieser Datei --
-# sie folgen erst mit S-008/S-009/S-010 auf demselben Grundgeruest. Die
-# Meilenstein-CRUD (create_milestone/set_milestone_status) selbst wird vom
-# Skill-Ausfuehrenden (Claude, SKILL.md) waehrend der eigentlichen Recherche
-# aufgerufen -- dieses Skript liefert nur die deterministische Anzeige des
-# aktuellen Standes im Brief (analog print_missing_sources_note fuer AC7).
+# ("Klaerungspunkte inkl. Schutzrechte, kein Rechtsmodul") + "SWOT-Judge"/
+# "Businessplan-Emitter"-Komponenten. Deep-Research/Empfehlungs-Kopplung
+# (AC3/AC4) sind weiterhin NICHT Teil dieser Datei -- sie folgen erst mit
+# S-009/S-010. Die eigentliche SWOT-Bewertung (Kategorie+claim_key je Claim,
+# create_swot_item) UND die Lauf-Anlage (create_run mit recommendation/
+# has_deep_research/momentum_only) werden -- analog zur Meilenstein-CRUD
+# (S-011) -- vom Skill-Ausfuehrenden (Claude, SKILL.md) waehrend der
+# eigentlichen Recherche aufgerufen, NICHT von diesem Skript selbst berechnet:
+# recommendation ist bewusst KEIN freier Bash-Heuristik-Entscheid dieses
+# Skripts (das wuerde AC4/BR-013 vorwegnehmen, siehe data-model.md §8 -- die
+# deterministische Ableitung aus dem Meilenstein-Status ist S-010-Scope).
+# print_swot_summary/print_recommendation/print_businessplan_template rendern
+# nur den bereits von Claude persistierten Stand eines Laufs (analog
+# print_milestone_overview fuer AC5) -- erreichbar ueber den neuen
+# `evaluation`-Subbefehl (main()).
 #
 # Boundary-Konformitaet (architecture.md, Review-Blocker): dieses Skript
-# beruehrt SQLite NIE direkt -- jede Themen-/Meilenstein-Anlage/-Abfrage laeuft
-# ausschliesslich ueber db_scripts/lib/topic.sh (create_topic/find_topic_by_title)
-# und db_scripts/lib/milestone.sh (create_milestone/list_milestones/
-# set_milestone_status) sowie die Sperre ueber db_scripts/lib/topic_lock.sh
+# beruehrt SQLite NIE direkt -- jede Themen-/Meilenstein-/Lauf-/SWOT-Anlage/
+# -Abfrage laeuft ausschliesslich ueber db_scripts/lib/topic.sh
+# (create_topic/find_topic_by_title), db_scripts/lib/milestone.sh
+# (create_milestone/list_milestones/set_milestone_status),
+# db_scripts/lib/run.sh (get_run) und db_scripts/lib/swot_item.sh
+# (list_swot_items) sowie die Sperre ueber db_scripts/lib/topic_lock.sh
 # (acquire_topic_lock/release_topic_lock). last30days wird ausschliesslich ueber
 # lib/last30days_client.sh aufgerufen (Discovery/Ingest-Pass).
 set -euo pipefail
@@ -35,6 +46,10 @@ source "$REPO_ROOT/db_scripts/lib/topic.sh"
 source "$REPO_ROOT/db_scripts/lib/topic_lock.sh"
 # shellcheck source=../../../db_scripts/lib/milestone.sh
 source "$REPO_ROOT/db_scripts/lib/milestone.sh"
+# shellcheck source=../../../db_scripts/lib/run.sh
+source "$REPO_ROOT/db_scripts/lib/run.sh"
+# shellcheck source=../../../db_scripts/lib/swot_item.sh
+source "$REPO_ROOT/db_scripts/lib/swot_item.sh"
 
 RA_DB_PATH="${RA_DB_PATH:-research-app.sqlite}"
 RA_SAVE_DIR="${RA_SAVE_DIR:-last30days-runs}"
@@ -157,6 +172,118 @@ print_milestone_overview() {
   return 0
 }
 
+# print_swot_summary <db-path> <run-id>
+# AC2 ("Bewertungsschicht"): rendert die fuer <run-id> bereits persistierten
+# strukturierten SWOT-Items (db_scripts/lib/swot_item.sh#list_swot_items --
+# kein direkter SQLite-Zugriff), gruppiert nach Kategorie. Die eigentliche
+# SWOT-Bewertung (create_swot_item je Claim, Kategorie+claim_key aus dem
+# kontrollierten Vokabular) erfolgt waehrend der Recherche selbst (SKILL.md,
+# analog zu print_milestone_overview/create_milestone, S-011) -- diese
+# Funktion zeigt nur den zum Aufrufzeitpunkt bereits persistierten Stand.
+print_swot_summary() {
+  local db="$1"
+  local run_id="$2"
+  local rows category claim_key
+  local strength_lines="" weakness_lines="" opportunity_lines="" threat_lines=""
+
+  echo "-- SWOT (strukturiert, BR-012) --"
+  rows="$(list_swot_items "$db" "$run_id")" || return 1
+
+  if [ -z "$rows" ]; then
+    echo "Noch keine SWOT-Items fuer diesen Lauf hinterlegt."
+    return 0
+  fi
+
+  while IFS='|' read -r category claim_key; do
+    [ -z "$category" ] && continue
+    case "$category" in
+      strength)    strength_lines="${strength_lines}  - $claim_key"$'\n' ;;
+      weakness)    weakness_lines="${weakness_lines}  - $claim_key"$'\n' ;;
+      opportunity) opportunity_lines="${opportunity_lines}  - $claim_key"$'\n' ;;
+      threat)      threat_lines="${threat_lines}  - $claim_key"$'\n' ;;
+    esac
+  done <<< "$rows"
+
+  echo "Staerken:"
+  if [ -n "$strength_lines" ]; then printf '%s' "$strength_lines"; else echo "  (keine)"; fi
+  echo "Schwaechen:"
+  if [ -n "$weakness_lines" ]; then printf '%s' "$weakness_lines"; else echo "  (keine)"; fi
+  echo "Chancen:"
+  if [ -n "$opportunity_lines" ]; then printf '%s' "$opportunity_lines"; else echo "  (keine)"; fi
+  echo "Risiken:"
+  if [ -n "$threat_lines" ]; then printf '%s' "$threat_lines"; else echo "  (keine)"; fi
+  return 0
+}
+
+# print_businessplan_template
+# BR-107: bei Empfehlung 'weiterverfolgen' wird das Businessplan-Template
+# ausgegeben -- ein reines Text-Skelett (analog zum Schutzrechte-
+# Klaerungspunkt): keine eigene Persistenz-Entitaet (data-model.md kennt keine
+# ra_businessplan-Tabelle; architecture.md "Businessplan-Emitter" liefert ein
+# Template, kein strukturiertes Datenmodell) -- Claude fuellt die Platzhalter
+# waehrend der Recherche im Brief-Freitext selbst aus (Simplicity-Leiter Stufe
+# 6: kein neues Schema fuer reinen Fuelltext; coder/R01: AC2 verlangt kein
+# Feld-Modell dafuer, nur die Ausfuellung des Templates).
+print_businessplan_template() {
+  echo "-- Businessplan-Template (BR-107) --"
+  echo "  Problem & Zielgruppe:"
+  echo "  Loesungsansatz:"
+  echo "  Markt & Wettbewerb (siehe SWOT):"
+  echo "  Meilenstein-Plan (siehe Voraussetzungs-Ueberblick):"
+  echo "  Ressourcenbedarf:"
+  return 0
+}
+
+# print_recommendation <db-path> <run-id>
+# AC2: liest die fuer <run-id> bereits persistierte Empfehlung + das
+# momentum_only-Flag (db_scripts/lib/run.sh#get_run) und rendert sie. Bei
+# 'weiterverfolgen' wird zusaetzlich das Businessplan-Template ausgegeben
+# (BR-107). Das momentum_only-Flag existiert bereits als Pflichtspalte seit
+# ra_run (003_ra_run.sql, S-003) -- diese Funktion zeigt nur den vorhandenen
+# Wert an; der Deep-Research-Pass selbst, der ihn befuellt, ist S-009-Scope
+# (AC3) und wird hier NICHT implementiert.
+print_recommendation() {
+  local db="$1"
+  local run_id="$2"
+  local row recommendation momentum_only
+
+  row="$(get_run "$db" "$run_id")" || return 1
+  IFS='|' read -r recommendation momentum_only <<< "$row"
+
+  echo "-- Empfehlung --"
+  if [ "$momentum_only" = "1" ]; then
+    echo "Empfehlung: $recommendation (Momentum-Signal -- kein Deep-Research-Pass, BR-014)"
+  else
+    echo "Empfehlung: $recommendation"
+  fi
+
+  if [ "$recommendation" = "weiterverfolgen" ]; then
+    print_businessplan_template
+  fi
+  return 0
+}
+
+# render_evaluation <db-path> <run-id>
+# Buendelt die Bewertungsschicht-Anzeige (AC2) fuer einen bereits persistierten
+# Lauf: SWOT-Zusammenfassung + Empfehlung (inkl. Businessplan-Template bei
+# 'weiterverfolgen'). Aufgerufen ueber den `evaluation`-Subbefehl (main()),
+# NACHDEM Claude waehrend der Recherche create_swot_item/create_run aufgerufen
+# hat (SKILL.md) -- kein eigener last30days-/Judge-Aufruf hier.
+render_evaluation() {
+  local db="$1"
+  local run_id="$2"
+
+  if [ -z "$run_id" ] || ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
+    echo "FATAL: Lauf-ID '$run_id' ist keine gueltige Ganzzahl -- Aufruf: orchestrator.sh evaluation <run-id>" >&2
+    return 1
+  fi
+
+  echo "== Bewertungsschicht (research-skill#AC2) =="
+  print_swot_summary "$db" "$run_id" || return 1
+  print_recommendation "$db" "$run_id" || return 1
+  return 0
+}
+
 # research_thema <db-path> <topic-title> <save-dir-base>
 # Thema-Modus (AC1): last30days ueber lib/last30days_client.sh aufrufen,
 # Thema ueber die Data-Access-Schicht anlegen/wiederverwenden (AC6),
@@ -264,6 +391,7 @@ usage() {
 Usage:
   orchestrator.sh discovery [save-dir]
   orchestrator.sh thema "<Thema-String>" [save-dir]
+  orchestrator.sh evaluation <run-id>
 
 Env:
   RA_DB_PATH            Pfad zur research-app.sqlite (Default: research-app.sqlite)
@@ -282,6 +410,10 @@ main() {
     thema)
       local title="${2:-}"
       research_thema "$RA_DB_PATH" "$title" "${3:-$RA_SAVE_DIR}"
+      ;;
+    evaluation)
+      local run_id="${2:-}"
+      render_evaluation "$RA_DB_PATH" "$run_id"
       ;;
     *)
       usage
