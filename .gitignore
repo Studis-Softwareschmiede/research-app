@@ -4,3 +4,8 @@
 !.env.example    # Vorlage MIT committen (keine echten Werte)
 !.env.gpg        # verschlüsselt — committet
 *.plain
+
+# Lokale Laufzeit-DB (research-app.sqlite via db_scripts/migrate.sh) — kein Schema-Artefakt
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
