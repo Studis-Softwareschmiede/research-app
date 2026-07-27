@@ -2,7 +2,7 @@ id: S-004
 parent: F-002
 title: 'Divergenz-Berechnung: ra_divergence mit Empfehlungs-Wechsel, SWOT-Item-Delta
   + Rollup, Meilenstein-Delta'
-status: In Progress
+status: Done
 priority: P0
 spec: docs/specs/research-datenmodell.md
 implements:
@@ -27,7 +27,7 @@ pr: null
 blocked_reason: null
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-27T09:36:24Z'
-done_at: null
+updated_at: '2026-07-27T10:07:14Z'
+done_at: '2026-07-27T10:07:14Z'
 claimed_by: MacBook-Pro-von-Alexander.local-22580-1785144984-21292
 claimed_at: '2026-07-27T09:36:24Z'
