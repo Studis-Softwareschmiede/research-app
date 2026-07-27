@@ -2,7 +2,7 @@ id: S-011
 parent: F-003
 title: 'Voraussetzungs-Ueberblick: Meilenstein-Liste je Thema erzeugen/aktualisieren,
   Schutzrechte als Klaerungspunkt'
-status: In Progress
+status: Done
 priority: P1
 spec: docs/specs/research-skill.md
 implements:
@@ -26,7 +26,7 @@ pr: null
 blocked_reason: null
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-27T11:57:48Z'
-done_at: null
-claimed_by: MacBook-Pro-von-Alexander.local-92956-1785153466-555
-claimed_at: '2026-07-27T11:57:47Z'
+updated_at: '2026-07-27T12:22:56Z'
+done_at: '2026-07-27T12:22:56Z'
+claimed_by: null
+claimed_at: null
