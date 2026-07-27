@@ -1,6 +1,7 @@
 id: S-005
 parent: F-002
-title: 'Meilenstein-Entitaet: Status offen/erfuellt/hinfaellig, Zustaendigkeit extern/eigen, Watchlist-Ref-Pflicht'
+title: 'Meilenstein-Entitaet: Status offen/erfuellt/hinfaellig, Zustaendigkeit extern/eigen,
+  Watchlist-Ref-Pflicht'
 status: To Do
 priority: P0
 spec: docs/specs/research-datenmodell.md
@@ -14,13 +15,18 @@ size_est: M
 dispo_est: null
 dispo_act: null
 dispo_forecast: null
-estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=1 (AC4) + n_comp=3 (ra_milestone-Tabelle, Status-/Zustaendigkeits-Enums, Watchlist-Referenz-Pflicht bei extern) + db-Label +1 = Score 5 -> M.'
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est
+  null, confidence low. Heuristik: n_ac=1 (AC4) + n_comp=3 (ra_milestone-Tabelle,
+  Status-/Zustaendigkeits-Enums, Watchlist-Referenz-Pflicht bei extern) + db-Label
+  +1 = Score 5 -> M.'
 confidence: low
 tok_est: null
-branch: null
+branch: feat/S-005-meilenstein-entitaet
 pr: null
 blocked_reason: null
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-27T09:10:38Z'
 done_at: null
+claimed_by: MacBook-Pro-von-Alexander.local-5870-1785143437-15242
+claimed_at: '2026-07-27T09:10:38Z'
