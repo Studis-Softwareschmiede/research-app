@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # run_tests.sh — Self-Test fuer db_scripts (Migrations-Grundgeruest + Fremd-Store-Schutz
-# + ra_topic: Themen-Anlage + Zustandsautomat, S-002).
+# + ra_topic: Themen-Anlage + Zustandsautomat, S-002 + ra_run: versionierte Laeufe +
+# result_hash, S-003).
 #
 # Rein mechanisches SQL/Shell-Test-Artefakt (M1 ist sprach-neutral, kein App-Layer
 # existiert -- profile.md: language: md). Erfuellt die Spec-Vertragszeile
@@ -8,14 +9,18 @@
 # 2026-07-26: reines SQL/Shell-Test-Transkript reicht, solange es committet ist).
 #
 # Covers (research-datenmodell): AC1 (Themen-Anlage, BR-001/BR-002, OF-02),
-# AC5 (Zustandsautomat, BR-003/BR-004/BR-005/BR-006, OF-10, sqlite/R02-Verbindungs-
-# Idiom, BR-019-busy_timeout-Vorbereitung), AC6 (Migrationen, aus S-001), AC8
-# (Fremd-Store-Schutz, aus S-001). AC4-Meilenstein-Kanten (BR-004-Gate,
-# OF-10-Kaskade) sind hier nur bis zur Grenze "ra_milestone existiert nicht"
-# getestet -- die volle Kopplung folgt mit S-005. Der volle AC7/BR-019-
-# Nebenlaeufigkeits-Ausbau (Advisory-Lock ra_topic_lock, Zwei-Schreiber-Test)
-# bleibt S-006 -- hier nur die busy_timeout-Absicherung der bestehenden
-# BEGIN IMMEDIATE-Verbindung (DBA-Review Iteration 2, Important-Fund).
+# AC2 (Versionierte Laeufe: ra_run, BR-007/BR-008/BR-009/BR-013/BR-014, OF-04,
+# §5-Hash-Bildungsregel, security/R03), AC5 (Zustandsautomat, BR-003/BR-004/BR-005/
+# BR-006, OF-10, sqlite/R02-Verbindungs-Idiom, BR-019-busy_timeout-Vorbereitung),
+# AC6 (Migrationen, aus S-001), AC8 (Fremd-Store-Schutz, aus S-001). AC4-Meilenstein-
+# Kanten (BR-004-Gate, OF-10-Kaskade) sind hier nur bis zur Grenze "ra_milestone
+# existiert nicht" getestet -- die volle Kopplung folgt mit S-005. Der volle
+# AC7/BR-019-Nebenlaeufigkeits-Ausbau (Advisory-Lock ra_topic_lock, Zwei-Schreiber-
+# Test) bleibt S-006 -- hier nur die busy_timeout-Absicherung der bestehenden
+# BEGIN IMMEDIATE-Verbindung (DBA-Review Iteration 2, Important-Fund). AC3
+# (ra_divergence) und AC4 (ra_milestone) bleiben S-004/S-005 -- compute_result_hash
+# wird deshalb hier nur mit direkt uebergebenen SWOT-/Meilenstein-Tupeln getestet
+# (kein ra_swot_item/ra_milestone-Tabellenzugriff, siehe run.sh-Datei-Header).
 #
 # Aufruf: db_scripts/tests/run_tests.sh
 set -euo pipefail
@@ -30,6 +35,8 @@ source "$DB_SCRIPTS_DIR/lib/apply_migrations.sh"
 source "$DB_SCRIPTS_DIR/lib/attach_l30d_readonly.sh"
 # shellcheck source=../lib/topic.sh
 source "$DB_SCRIPTS_DIR/lib/topic.sh"
+# shellcheck source=../lib/run.sh
+source "$DB_SCRIPTS_DIR/lib/run.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -517,6 +524,124 @@ if set_topic_status "$NO_MS_DB" "$TID_G" "geparkt" 2> "$TMP/gate-g.err"; then
   ok "ohne ra_milestone-Tabelle (vor S-005) degradiert das BR-004-Gate dokumentiert zum No-op -- aktiv -> geparkt geht durch"
 else
   bad "ohne ra_milestone haette der degradierte Pfad durchgehen sollen: $(cat "$TMP/gate-g.err")"
+fi
+
+echo "== @trace research-datenmodell#AC2,BR-007,OF-04 -- monotone Version je (Thema,Art), getrennt gezaehlt =="
+RUN_TOPIC="$(create_topic "$TOPIC_DB" "Lauf-Thema")"
+HASH_1="$(compute_result_hash "weiterverfolgen" "" "" 2> "$TMP/hash1.err")"
+RUN_A="$(create_run "$TOPIC_DB" "$RUN_TOPIC" "recherche" "$HASH_1" "weiterverfolgen" 1 0 2> "$TMP/run-a.err")"
+RUN_B="$(create_run "$TOPIC_DB" "$RUN_TOPIC" "recherche" "$HASH_1" "weiterverfolgen" 1 0 2> "$TMP/run-b.err")"
+VER_A="${RUN_A#*|}"
+VER_B="${RUN_B#*|}"
+if [ "$VER_A" = "1" ] && [ "$VER_B" = "2" ]; then
+  ok "zwei Laeufe desselben Themas+Art erhalten die Versionen 1 und 2 (BR-007)"
+else
+  bad "erwartete Versionen 1,2 fuer kind=recherche, bekam '$VER_A','$VER_B' ($(cat "$TMP/run-a.err") $(cat "$TMP/run-b.err"))"
+fi
+
+RUN_PM="$(create_run "$TOPIC_DB" "$RUN_TOPIC" "pm" "$HASH_1" "weiterverfolgen" 1 0 2> "$TMP/run-pm.err")"
+VER_PM="${RUN_PM#*|}"
+if [ "$VER_PM" = "1" ]; then
+  ok "kind='pm' zaehlt unabhaengig von kind='recherche' -- erste PM-Version ist 1 (OF-04)"
+else
+  bad "erwartete Version 1 fuer den ersten pm-Lauf, bekam '$VER_PM': $(cat "$TMP/run-pm.err")"
+fi
+
+echo "== @trace research-datenmodell#AC2,BR-007 -- UNIQUE(topic_id,kind,version) ist der native Backstop =="
+set +e
+sqlite3 "$TOPIC_DB" "PRAGMA foreign_keys = ON; INSERT INTO ra_run (topic_id, kind, version, result_hash, recommendation, has_deep_research, momentum_only) VALUES ('$RUN_TOPIC', 'recherche', 1, '$HASH_1', 'weiterverfolgen', 1, 0);" > /dev/null 2>"$TMP/dup-ver.err"
+DUP_VER_RC=$?
+set -e
+if [ "$DUP_VER_RC" -ne 0 ] && grep -qi "UNIQUE" "$TMP/dup-ver.err"; then
+  ok "doppelte Version fuer dasselbe (topic_id,kind) wird per UNIQUE-Constraint abgelehnt (BR-007)"
+else
+  bad "doppelte Version haette per UNIQUE abgelehnt werden muessen, rc=$DUP_VER_RC: $(cat "$TMP/dup-ver.err")"
+fi
+
+echo "== @trace research-datenmodell#AC2,BR-008 -- ra_run.kind nur enum{recherche,pm} =="
+set +e
+BAD_KIND_OUT="$(create_run "$TOPIC_DB" "$RUN_TOPIC" "sonstiges" "$HASH_1" "weiterverfolgen" 1 0 2>"$TMP/bad-kind.err")"
+BAD_KIND_RC=$?
+set -e
+if [ "$BAD_KIND_RC" -ne 0 ] && [ -z "$BAD_KIND_OUT" ] && grep -qi "BR-008" "$TMP/bad-kind.err"; then
+  ok "unbekannte Lauf-Art wird vor der SQL-Interpolation abgelehnt (BR-008)"
+else
+  bad "unbekannte Lauf-Art haette abgelehnt werden muessen, rc=$BAD_KIND_RC out='$BAD_KIND_OUT'"
+fi
+
+echo "== @trace research-datenmodell#AC2,BR-013 -- ra_run.recommendation nur enum{weiterverfolgen,parken,verwerfen} =="
+set +e
+BAD_REC_OUT="$(create_run "$TOPIC_DB" "$RUN_TOPIC" "recherche" "$HASH_1" "vielleicht" 1 0 2>"$TMP/bad-rec.err")"
+BAD_REC_RC=$?
+set -e
+if [ "$BAD_REC_RC" -ne 0 ] && [ -z "$BAD_REC_OUT" ] && grep -qi "BR-013" "$TMP/bad-rec.err"; then
+  ok "unbekannte Empfehlung wird abgelehnt (BR-013)"
+else
+  bad "unbekannte Empfehlung haette abgelehnt werden muessen, rc=$BAD_REC_RC out='$BAD_REC_OUT'"
+fi
+
+echo "== @trace research-datenmodell#AC2,BR-014 -- has_deep_research/momentum_only-Konsistenz (gdw.) =="
+set +e
+MISMATCH_OUT_1="$(create_run "$TOPIC_DB" "$RUN_TOPIC" "recherche" "$HASH_1" "weiterverfolgen" 0 0 2>"$TMP/mismatch1.err")"
+MISMATCH_RC_1=$?
+MISMATCH_OUT_2="$(create_run "$TOPIC_DB" "$RUN_TOPIC" "recherche" "$HASH_1" "weiterverfolgen" 1 1 2>"$TMP/mismatch2.err")"
+MISMATCH_RC_2=$?
+set -e
+if [ "$MISMATCH_RC_1" -ne 0 ] && [ -z "$MISMATCH_OUT_1" ] && grep -qi "BR-014" "$TMP/mismatch1.err" \
+  && [ "$MISMATCH_RC_2" -ne 0 ] && [ -z "$MISMATCH_OUT_2" ] && grep -qi "BR-014" "$TMP/mismatch2.err"; then
+  ok "has_deep_research=0/momentum_only=0 UND has_deep_research=1/momentum_only=1 werden beide abgelehnt (BR-014 'gdw.')"
+else
+  bad "BR-014-Inkonsistenz haette in beide Richtungen abgelehnt werden muessen: rc1=$MISMATCH_RC_1 out1='$MISMATCH_OUT_1' rc2=$MISMATCH_RC_2 out2='$MISMATCH_OUT_2'"
+fi
+
+RUN_MOMENTUM="$(create_run "$TOPIC_DB" "$RUN_TOPIC" "recherche" "$HASH_1" "weiterverfolgen" 0 1 2> "$TMP/momentum.err")"
+if [ -n "$RUN_MOMENTUM" ]; then
+  ok "has_deep_research=0 + momentum_only=1 ist die gueltige Momentum-Signal-Kombination (BR-014)"
+else
+  bad "gueltige Momentum-Kombination haette durchgehen sollen: $(cat "$TMP/momentum.err")"
+fi
+
+echo "== @trace research-datenmodell#AC2,BR-009 -- result_hash ist deterministisch ueber strukturierte Felder =="
+HASH_X1="$(compute_result_hash "weiterverfolgen" "$(printf 'strength|marktfuehrer\nopportunity|neue_regulierung')" "$(printf 'patentanmeldung|offen|extern')")"
+HASH_X2="$(compute_result_hash "WEITERVERFOLGEN" "$(printf 'opportunity|neue_regulierung  \n  Strength|Marktfuehrer')" "$(printf '  PATENTANMELDUNG | OFFEN | Extern')")"
+if [ -n "$HASH_X1" ] && [ "$HASH_X1" = "$HASH_X2" ]; then
+  ok "gleicher strukturierter Ergebnisstand erzeugt denselben Hash unabhaengig von Feld-Reihenfolge/Gross-Klein-Schreibung/Whitespace (BR-009, §5 Normalisierung+Sortierung)"
+else
+  bad "identischer strukturierter Ergebnisstand haette denselben Hash erzeugen muessen: '$HASH_X1' vs '$HASH_X2'"
+fi
+if [[ "$HASH_X1" =~ ^[0-9a-f]{64}$ ]]; then
+  ok "compute_result_hash liefert einen 64-stelligen SHA-256-Hex-Digest"
+else
+  bad "compute_result_hash lieferte kein gueltiges SHA-256-Hex-Format: '$HASH_X1'"
+fi
+
+HASH_Y="$(compute_result_hash "parken" "$(printf 'strength|marktfuehrer\nopportunity|neue_regulierung')" "$(printf 'patentanmeldung|offen|extern')")"
+if [ "$HASH_X1" != "$HASH_Y" ]; then
+  ok "geaenderte Empfehlung (sonst identischer Stand) erzeugt einen anderen Hash (BR-009 -- Empfehlung fliesst ein)"
+else
+  bad "unterschiedliche Empfehlung haette zu unterschiedlichem Hash fuehren muessen"
+fi
+
+echo "== @trace research-datenmodell#AC2,security/R03 -- result_hash-Format wird vor der SQL-Interpolation validiert =="
+set +e
+BAD_HASH_OUT="$(create_run "$TOPIC_DB" "$RUN_TOPIC" "recherche" "'; DROP TABLE ra_run;--" "weiterverfolgen" 1 0 2>"$TMP/bad-hash.err")"
+BAD_HASH_RC=$?
+set -e
+TABLE_STILL_THERE="$(sqlite3 "$TOPIC_DB" "SELECT name FROM sqlite_master WHERE type='table' AND name='ra_run';")"
+if [ "$BAD_HASH_RC" -ne 0 ] && [ -z "$BAD_HASH_OUT" ] && grep -qi "security/R03" "$TMP/bad-hash.err" && [ "$TABLE_STILL_THERE" = "ra_run" ]; then
+  ok "manipulierter result_hash wird per Formatpruefung abgelehnt, bevor er ins SQL interpoliert wird (security/R03)"
+else
+  bad "manipulierter result_hash haette abgelehnt werden muessen, rc=$BAD_HASH_RC out='$BAD_HASH_OUT' table='$TABLE_STILL_THERE'"
+fi
+
+echo "== @trace research-datenmodell#AC2 -- l30d_source_ref ist optional (soft-Referenz, kein FK) =="
+RUN_NO_REF="$(create_run "$TOPIC_DB" "$RUN_TOPIC" "recherche" "$HASH_1" "weiterverfolgen" 1 0 2> "$TMP/no-ref.err")"
+RUN_NO_REF_ID="${RUN_NO_REF%%|*}"
+REF_VAL="$(sqlite3 "$TOPIC_DB" "SELECT l30d_source_ref FROM ra_run WHERE id = $RUN_NO_REF_ID;")"
+if [ -z "$REF_VAL" ]; then
+  ok "ohne uebergebene l30d_source_ref bleibt die Spalte NULL"
+else
+  bad "erwartete NULL l30d_source_ref, bekam '$REF_VAL'"
 fi
 
 echo
