@@ -2,7 +2,8 @@
 # run_tests.sh — Self-Test fuer db_scripts (Migrations-Grundgeruest + Fremd-Store-Schutz
 # + ra_topic: Themen-Anlage + Zustandsautomat, S-002 + ra_run: versionierte Laeufe +
 # result_hash, S-003 + ra_milestone: Status/Zustaendigkeit/Watchlist-Ref-Pflicht,
-# S-005 + ra_divergence: Divergenz-Berechnung + Materialisierung, S-004).
+# S-005 + ra_divergence: Divergenz-Berechnung + Materialisierung, S-004 +
+# ra_topic_lock: Advisory-Serialisierungssperre je Thema, S-006).
 #
 # Rein mechanisches SQL/Shell-Test-Artefakt (M1 ist sprach-neutral, kein App-Layer
 # existiert -- profile.md: language: md). Erfuellt die Spec-Vertragszeile
@@ -25,8 +26,12 @@
 # 004_ra_milestone.sql-Header), AC5 (Zustandsautomat, BR-003/BR-004/BR-005/
 # BR-006, OF-10, sqlite/R02-Verbindungs-Idiom, BR-019-busy_timeout-Vorbereitung --
 # BR-004-Gate/OF-10-Kaskade jetzt gegen die echte ra_milestone-Tabelle aus S-005
-# statt einer Test-lokalen Ersatztabelle), AC6 (Migrationen, aus S-001), AC8
-# (Fremd-Store-Schutz, aus S-001).
+# statt einer Test-lokalen Ersatztabelle), AC6 (Migrationen, aus S-001), AC7
+# (Nebenlaeufigkeit: ra_topic_lock, BR-019 Advisory-Lock je Thema + atomare
+# ON CONFLICT..WHERE-Uebernahme, E2 Stale-Ablauf via expires_at (kein Dauer-Deadlock),
+# BEGIN IMMEDIATE+busy_timeout-Reihenfolge, security/R03 -- inkl. echtem Test mit ZWEI
+# parallelen OS-Prozessen (Watchlist-Job + /research-Lauf simuliert) auf dasselbe
+# Thema), AC8 (Fremd-Store-Schutz, aus S-001).
 #
 # Aufruf: db_scripts/tests/run_tests.sh
 set -euo pipefail
@@ -45,6 +50,8 @@ source "$DB_SCRIPTS_DIR/lib/topic.sh"
 source "$DB_SCRIPTS_DIR/lib/run.sh"
 # shellcheck source=../lib/divergence.sh
 source "$DB_SCRIPTS_DIR/lib/divergence.sh"
+# shellcheck source=../lib/topic_lock.sh
+source "$DB_SCRIPTS_DIR/lib/topic_lock.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -890,6 +897,171 @@ if [ "$CHECK_BACKSTOP_MS_RC" -ne 0 ] && echo "$CHECK_BACKSTOP_MS_ERR" | grep -qi
   ok "nativer CHECK in 005_ra_divergence.sql lehnt is_empty=1 mit gesetztem milestone_status_delta ab (Konsistenz-Backstop, BR-010)"
 else
   bad "CHECK-Backstop haette is_empty=1 + gesetztes milestone_status_delta ablehnen sollen, rc=$CHECK_BACKSTOP_MS_RC: $CHECK_BACKSTOP_MS_ERR"
+fi
+
+echo "== @trace research-datenmodell#AC7,BR-019 -- acquire_topic_lock erwirbt eine freie Sperre =="
+LOCK_TOPIC="$(create_topic "$TOPIC_DB" "Lock-Thema")"
+if acquire_topic_lock "$TOPIC_DB" "$LOCK_TOPIC" "research" 30 2> "$TMP/lock-a.err"; then
+  ok "acquire_topic_lock erwirbt eine bislang freie Sperre (rc=0)"
+else
+  bad "acquire_topic_lock haette eine freie Sperre erwerben sollen: $(cat "$TMP/lock-a.err")"
+fi
+LOCK_ROW="$(sqlite3 -separator '|' "$TOPIC_DB" "SELECT holder FROM ra_topic_lock WHERE topic_id = '$LOCK_TOPIC';")"
+if [ "$LOCK_ROW" = "research" ]; then
+  ok "ra_topic_lock traegt den erwartenden Halter 'research' nach dem Erwerb"
+else
+  bad "erwartete Halter 'research', bekam '$LOCK_ROW'"
+fi
+
+echo "== @trace research-datenmodell#AC7,BR-019 -- zweiter Erwerb derselben, noch gueltigen Sperre wird abgelehnt =="
+set +e
+acquire_topic_lock "$TOPIC_DB" "$LOCK_TOPIC" "watchlist" 30 > /dev/null 2> "$TMP/lock-b.err"
+LOCK_B_RC=$?
+set -e
+LOCK_ROW_AFTER="$(sqlite3 -separator '|' "$TOPIC_DB" "SELECT holder FROM ra_topic_lock WHERE topic_id = '$LOCK_TOPIC';")"
+if [ "$LOCK_B_RC" -ne 0 ] && [ "$LOCK_ROW_AFTER" = "research" ] && grep -qi "BR-019" "$TMP/lock-b.err"; then
+  ok "ein zweiter Halter wird abgelehnt, solange die bestehende Sperre nicht abgelaufen ist (BR-019), Halter bleibt unveraendert"
+else
+  bad "zweiter Erwerb haette abgelehnt werden muessen, rc=$LOCK_B_RC holder='$LOCK_ROW_AFTER': $(cat "$TMP/lock-b.err")"
+fi
+
+echo "== @trace research-datenmodell#AC7,BR-019 -- release_topic_lock lehnt Freigabe durch falschen Halter ab, gibt fuer den echten Halter frei =="
+set +e
+release_topic_lock "$TOPIC_DB" "$LOCK_TOPIC" "watchlist" > /dev/null 2> "$TMP/release-wrong.err"
+RELEASE_WRONG_RC=$?
+set -e
+STILL_LOCKED="$(sqlite3 "$TOPIC_DB" "SELECT COUNT(*) FROM ra_topic_lock WHERE topic_id = '$LOCK_TOPIC';")"
+if [ "$RELEASE_WRONG_RC" -ne 0 ] && [ "$STILL_LOCKED" = "1" ]; then
+  ok "Freigabe durch einen Nicht-Halter wird abgelehnt, die Sperre bleibt bestehen"
+else
+  bad "Freigabe durch falschen Halter haette abgelehnt werden muessen, rc=$RELEASE_WRONG_RC rows=$STILL_LOCKED: $(cat "$TMP/release-wrong.err")"
+fi
+
+if release_topic_lock "$TOPIC_DB" "$LOCK_TOPIC" "research" 2> "$TMP/release-ok.err"; then
+  ok "release_topic_lock gibt die Sperre durch den tatsaechlichen Halter frei"
+else
+  bad "release_topic_lock haette durch den echten Halter freigeben sollen: $(cat "$TMP/release-ok.err")"
+fi
+RELEASED_COUNT="$(sqlite3 "$TOPIC_DB" "SELECT COUNT(*) FROM ra_topic_lock WHERE topic_id = '$LOCK_TOPIC';")"
+if [ "$RELEASED_COUNT" = "0" ]; then
+  ok "nach Freigabe existiert keine Lock-Zeile mehr fuer das Thema"
+else
+  bad "nach Freigabe haette keine Lock-Zeile mehr existieren sollen, gefunden: $RELEASED_COUNT"
+fi
+
+echo "== @trace research-datenmodell#AC7,E2 -- abgelaufene Sperre wird uebernommen, kein Dauer-Deadlock =="
+acquire_topic_lock "$TOPIC_DB" "$LOCK_TOPIC" "watchlist" 1 > /dev/null
+sleep 2
+if acquire_topic_lock "$TOPIC_DB" "$LOCK_TOPIC" "research" 30 2> "$TMP/lock-stale.err"; then
+  ok "eine abgelaufene Sperre (expires_at in der Vergangenheit) wird von einem anderen Halter uebernommen (E2)"
+else
+  bad "abgelaufene Sperre haette uebernommen werden sollen: $(cat "$TMP/lock-stale.err")"
+fi
+STALE_HOLDER="$(sqlite3 -separator '|' "$TOPIC_DB" "SELECT holder FROM ra_topic_lock WHERE topic_id = '$LOCK_TOPIC';")"
+if [ "$STALE_HOLDER" = "research" ]; then
+  ok "nach Uebernahme traegt die Zeile den neuen Halter 'research', kein doppelter Row entstanden (PK topic_id)"
+else
+  bad "erwartete Halter 'research' nach Uebernahme, bekam '$STALE_HOLDER'"
+fi
+release_topic_lock "$TOPIC_DB" "$LOCK_TOPIC" "research" > /dev/null
+
+echo "== @trace research-datenmodell#AC7,BR-019 -- BEGIN IMMEDIATE-Verbindungen setzen PRAGMA busy_timeout VOR Transaktionsstart =="
+ACQUIRE_SRC="$(declare -f acquire_topic_lock)"
+RELEASE_SRC="$(declare -f release_topic_lock)"
+for pair in "acquire_topic_lock:$ACQUIRE_SRC" "release_topic_lock:$RELEASE_SRC"; do
+  fn_name="${pair%%:*}"
+  fn_src="${pair#*:}"
+  if echo "$fn_src" | grep -q "PRAGMA busy_timeout"; then
+    ok "$fn_name() setzt PRAGMA busy_timeout auf der BEGIN IMMEDIATE-Verbindung"
+  else
+    bad "$fn_name() sollte PRAGMA busy_timeout an der BEGIN IMMEDIATE-Verbindung setzen (BR-019)"
+  fi
+  order_check="$(echo "$fn_src" | grep -n "PRAGMA busy_timeout\|BEGIN IMMEDIATE")"
+  busy_line="$(echo "$order_check" | grep "PRAGMA busy_timeout" | head -1 | cut -d: -f1)"
+  begin_line="$(echo "$order_check" | grep "BEGIN IMMEDIATE" | head -1 | cut -d: -f1)"
+  if [ -n "$busy_line" ] && [ -n "$begin_line" ] && [ "$busy_line" -lt "$begin_line" ]; then
+    ok "$fn_name(): PRAGMA busy_timeout steht VOR BEGIN IMMEDIATE in derselben Verbindung"
+  else
+    bad "$fn_name(): PRAGMA busy_timeout muss VOR BEGIN IMMEDIATE stehen (busy_line=$busy_line begin_line=$begin_line)"
+  fi
+done
+
+echo "== @trace research-datenmodell#AC7,security/R03 -- ungueltige Eingaben werden vor SQL-Interpolation abgelehnt =="
+set +e
+BAD_TOPIC_OUT="$(acquire_topic_lock "$TOPIC_DB" "x'; DROP TABLE ra_topic_lock; --" "research" 30 2> "$TMP/inject-lock.err")"
+BAD_TOPIC_RC=$?
+set -e
+LOCK_TABLE_STILL_THERE="$(sqlite3 "$TOPIC_DB" "SELECT name FROM sqlite_master WHERE type='table' AND name='ra_topic_lock';")"
+if [ "$BAD_TOPIC_RC" -ne 0 ] && [ -z "$BAD_TOPIC_OUT" ] && grep -qi "security/R03" "$TMP/inject-lock.err" && [ "$LOCK_TABLE_STILL_THERE" = "ra_topic_lock" ]; then
+  ok "manipulierte Themen-ID wird per Format-Check FATAL abgelehnt, ra_topic_lock bleibt unangetastet (security/R03)"
+else
+  bad "manipulierte Themen-ID haette abgelehnt werden muessen, rc=$BAD_TOPIC_RC out='$BAD_TOPIC_OUT' table='$LOCK_TABLE_STILL_THERE': $(cat "$TMP/inject-lock.err")"
+fi
+
+set +e
+BAD_HOLDER_OUT="$(acquire_topic_lock "$TOPIC_DB" "$LOCK_TOPIC" "sonstwer" 30 2> "$TMP/bad-holder.err")"
+BAD_HOLDER_RC=$?
+set -e
+if [ "$BAD_HOLDER_RC" -ne 0 ] && [ -z "$BAD_HOLDER_OUT" ] && grep -qi "BR-019" "$TMP/bad-holder.err"; then
+  ok "unbekannter Halter wird abgelehnt (BR-019)"
+else
+  bad "unbekannter Halter haette abgelehnt werden muessen, rc=$BAD_HOLDER_RC out='$BAD_HOLDER_OUT'"
+fi
+
+set +e
+BAD_TTL_OUT="$(acquire_topic_lock "$TOPIC_DB" "$LOCK_TOPIC" "research" "30; DROP TABLE ra_topic_lock;--" 2> "$TMP/bad-ttl.err")"
+BAD_TTL_RC=$?
+set -e
+if [ "$BAD_TTL_RC" -ne 0 ] && [ -z "$BAD_TTL_OUT" ] && grep -qi "security/R03" "$TMP/bad-ttl.err"; then
+  ok "manipulierter TTL-Wert wird vor der SQL-Interpolation abgelehnt (security/R03)"
+else
+  bad "manipulierter TTL-Wert haette abgelehnt werden muessen, rc=$BAD_TTL_RC out='$BAD_TTL_OUT': $(cat "$TMP/bad-ttl.err")"
+fi
+
+echo "== @trace research-datenmodell#AC7,BR-019 -- FK: Sperre auf nicht existierendes Thema wird abgelehnt =="
+set +e
+FK_LOCK_ERR="$(acquire_topic_lock "$TOPIC_DB" "00000000-0000-7000-8000-0000000000ee" "research" 30 2>&1)"
+FK_LOCK_RC=$?
+set -e
+if [ "$FK_LOCK_RC" -ne 0 ]; then
+  ok "Sperre auf ein nicht existierendes Thema wird per FK-Constraint abgelehnt"
+else
+  bad "Sperre auf nicht existierendes Thema haette abgelehnt werden muessen: $FK_LOCK_ERR"
+fi
+
+echo "== @trace research-datenmodell#AC7,BR-019 -- zwei ECHTE parallele Schreiber (Watchlist-Job + /research-Lauf) auf dasselbe Thema korrumpieren nichts =="
+CONCURRENT_TOPIC="$(create_topic "$TOPIC_DB" "Nebenlaeufigkeits-Thema")"
+CONCURRENT_ROUNDS=5
+CONCURRENT_OK_TOTAL=0
+for round in $(seq 1 "$CONCURRENT_ROUNDS"); do
+  (
+    set +e
+    acquire_topic_lock "$TOPIC_DB" "$CONCURRENT_TOPIC" "watchlist" 30 > "$TMP/conc-w-$round.out" 2> "$TMP/conc-w-$round.err"
+    echo $? > "$TMP/conc-w-$round.rc"
+  ) &
+  (
+    set +e
+    acquire_topic_lock "$TOPIC_DB" "$CONCURRENT_TOPIC" "research" 30 > "$TMP/conc-r-$round.out" 2> "$TMP/conc-r-$round.err"
+    echo $? > "$TMP/conc-r-$round.rc"
+  ) &
+  wait
+  RC_W="$(cat "$TMP/conc-w-$round.rc")"
+  RC_R="$(cat "$TMP/conc-r-$round.rc")"
+  ROWS_AFTER="$(sqlite3 "$TOPIC_DB" "SELECT COUNT(*) FROM ra_topic_lock WHERE topic_id = '$CONCURRENT_TOPIC';")"
+  if [ "$ROWS_AFTER" != "1" ]; then
+    bad "Runde $round: nach zwei gleichzeitigen Erwerbsversuchen haette genau 1 Lock-Zeile existieren muessen (BR-019, kein korrupter Doppel-Erwerb), gefunden: $ROWS_AFTER"
+  fi
+  if { [ "$RC_W" = "0" ] && [ "$RC_R" != "0" ]; } || { [ "$RC_W" != "0" ] && [ "$RC_R" = "0" ]; }; then
+    CONCURRENT_OK_TOTAL=$((CONCURRENT_OK_TOTAL + 1))
+  else
+    bad "Runde $round: erwartet genau EIN erfolgreicher Erwerb unter zwei echten parallelen OS-Prozessen, bekam rc_watchlist=$RC_W rc_research=$RC_R"
+  fi
+  sqlite3 "$TOPIC_DB" "DELETE FROM ra_topic_lock WHERE topic_id = '$CONCURRENT_TOPIC';"
+done
+if [ "$CONCURRENT_OK_TOTAL" = "$CONCURRENT_ROUNDS" ]; then
+  ok "$CONCURRENT_ROUNDS/$CONCURRENT_ROUNDS Runden: unter zwei echten parallelen Schreiber-Prozessen (Watchlist-Job + /research-Lauf simuliert, jeweils per '&' als eigener OS-Prozess gestartet) gewinnt in jeder Runde genau einer, nie beide/keiner, nie mehr als 1 Zeile (AC7, BR-019)"
+else
+  bad "nur $CONCURRENT_OK_TOTAL/$CONCURRENT_ROUNDS Runden hatten exakt einen Gewinner -- Nebenlaeufigkeits-Serialisierung unzuverlaessig"
 fi
 
 echo
