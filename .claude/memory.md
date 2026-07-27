@@ -2,37 +2,41 @@
 > Kuratiert von /flow am Ende jeder Session. Max. 60 Zeilen.
 
 ## Aktueller Stand
-M1 (Datenmodell) läuft. S-001 bis S-006 sind Done und auf main (zuletzt
-S-006 Advisory-Lock). Ready als Nächstes: S-007, S-012, S-013, S-021 —
-nächster Lauf nimmt voraussichtlich S-007 (/research-Skill-Grundgerüst,
-F-003). Board: 18 offene Stories. Stack bleibt bewusst offen (language:
-md, No-Op build/test) — Implementierung als Bash/SQL unter db_scripts/
-(Migrationen 001–006, lib/, tests/; 110 Tests grün).
+M1 (Datenmodell) ist komplett, M2 (F-003 /research-Skill) läuft. S-001
+bis S-007 sind Done und auf main (zuletzt S-007: Skill-Grundgerüst unter
+skills/research/). Ready: S-008, S-011, S-012, S-013, S-021 — nächster
+Lauf nimmt voraussichtlich S-008 (Recherche-Brief + SWOT-Judge). Board:
+17 offene Stories. Stack bleibt bewusst offen (language: md, No-Op
+build/test) — Implementierung als Bash/SQL unter db_scripts/ (Migrationen
+001–006, lib/, tests/; 110 Tests) + skills/research/ (19 Tests), alles grün.
 
 ## Letzte Arbeiten
-- S-006 / Advisory-Lock ra_topic_lock gelandet (4a79db8, Done 3d82789):
-  Migration 006 + lib/topic_lock.sh (acquire/release, atomare Stale-
-  Übernahme via ON CONFLICT…WHERE expires_at<now, changes()-Auswertung),
-  17 neue Tests inkl. echtem Zwei-Prozess-Parallel-Test. Ein Gate-Lauf:
-  reviewer+dba+tester PASS ohne Befunde (nur sqlite/R10-Suggestion).
-- S-004 / Divergenz-Berechnung ra_divergence gelandet (869f62b):
-  Migration 005 + lib/divergence.sh; Reviewer-Fund busy_timeout vor
-  BEGIN IMMEDIATE behoben.
-- S-005 / Meilenstein-Entität ra_milestone gelandet (54fbcdb): CHECK-
-  Constraints BR-015/BR-016; BR-004-Gate/OF-10-Kaskade in lib/topic.sh.
+- S-007 / /research-Skill-Grundgerüst gelandet (a1897be, Done 0884067):
+  skills/research/ mit orchestrator.sh (discovery/thema-Modi, E1-Preflight,
+  E3-Lock via lib/topic_lock.sh, Quellen-Resilienz-Brief AC7) +
+  scripts/lib/last30days_client.sh (--emit=json/--save-dir/--store);
+  topic.sh um Lesefunktionen find_topic_by_title/ra_topic_store_ready
+  erweitert; Spec-Präzisierung BR-109 (titelgleiches Thema wird
+  wiederverwendet). Ein Gate-Lauf: reviewer+dba+tester PASS ohne Befunde.
+- S-006 / Advisory-Lock ra_topic_lock (4a79db8): Migration 006 +
+  lib/topic_lock.sh, Zwei-Prozess-Parallel-Test.
+- S-004/S-005 / Divergenz ra_divergence (869f62b) + Meilenstein
+  ra_milestone (54fbcdb).
 
 ## Offene Fäden
-- ra_swot_item-Lücke (Reviewer-Befund S-004, an requirement klären): keine
-  F-002/M1-Story legt die in data-model.md §0/§2.3 als M1 geführte Tabelle
-  an — run.sh (S-003) und divergence.sh (S-004) umgehen sie per Parameter-
-  Übergabe. Eigene M1-Story nachziehen oder data-model auf M2 anpassen.
-- sqlite/R10 (DBA-Suggestion S-006): gebundene sqlite3-CLI ist 3.51.0 —
-  unter dem WAL-Reset-Guard-Schwellwert; version_guard.sh prüft nur in
-  migrate.sh, nicht in den Data-Access-Skripten. Vor Produktiv-Einsatz
-  klären (Version anheben oder Guard auch dort sourcen), M2-Folgeaufgabe.
-- S-008-Implementierer-Hinweis: create_divergence verlangt bei erwarteter
-  Hash-Gleichheit (is_empty=1) leere Delta-Strings, sonst FATAL durch CHECK.
-- DBA-Suggestion S-005: fulfilled_at hat noch keinen Konsistenz-CHECK zu
-  status='erfuellt' — ergänzen, sobald eine Data-Access-Funktion ihn setzt.
-- board-ship.sh: CI-Watch-Hang auch bei S-006 (wie S-005) — Recovery-Muster
-  in lessons/flow.md; tok_total-Nachtrag zählt evtl. zu viel (87M bei S-006).
+- Live-Smoke gegen echtes last30days fehlt (S-007 lief nur gegen
+  Fixture-Stub RA_LAST30DAYS_CMD — last30days im Env nicht installiert).
+  Vor F-003-Abschluss einplanen (Reviewer/Tester-Vermerk, reviewer/R06d).
+- ra_swot_item-Lücke (an requirement klären): keine M1-Story legt die in
+  data-model.md §0/§2.3 geführte Tabelle an; S-008 (SWOT-Items!) braucht
+  Klärung — run.sh/divergence.sh umgehen sie per Parameter-Übergabe.
+- S-008-Implementierer-Hinweis: create_divergence verlangt bei is_empty=1
+  leere Delta-Strings, sonst FATAL durch CHECK. create_run wird in S-008
+  erstmals aus dem Skill heraus aufgerufen.
+- sqlite/R10: gebundene sqlite3-CLI 3.51.0 unter WAL-Reset-Guard-Schwelle;
+  version_guard.sh nur in migrate.sh gesourct. M2-Folgeaufgabe.
+- DBA-Suggestions offen: fulfilled_at-CHECK zu status='erfuellt' (S-005);
+  Apostroph-Injection-Test für find_topic_by_title (S-007, Test-Hygiene).
+- board-ship.sh CI-Watch-Hang zum 3. Mal (S-005/S-006/S-007) — Recovery-
+  Muster in lessons/flow.md greift; tok_total-Nachtrag evtl. zu hoch
+  (87M S-006, 51M S-007).

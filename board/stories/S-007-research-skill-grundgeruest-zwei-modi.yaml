@@ -15,7 +15,7 @@ depends:
 labels: null
 size_est: L
 dispo_est: null
-dispo_act: null
+dispo_act: '4'
 dispo_forecast: null
 estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est
   null, confidence low. Heuristik: n_ac=3 (AC1,AC6,AC7) + n_comp=5 (Skill-Scaffold
@@ -28,7 +28,8 @@ pr: null
 blocked_reason: null
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-27T11:15:19Z'
+updated_at: '2026-07-27T11:16:36Z'
 done_at: '2026-07-27T11:15:19Z'
 claimed_by: MacBook-Pro-von-Alexander.local-64339-1785148923-24253
 claimed_at: '2026-07-27T10:42:04Z'
+tok: '50947545'
