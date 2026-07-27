@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # topic.sh — Data-Access-Schicht fuer ra_topic (Themen-Anlage + Zustandsautomat).
 #
-# Quelle: docs/specs/research-datenmodell.md AC1, AC5; docs/data-model.md §2.1, §4, §7.
+# Quelle: docs/specs/research-datenmodell.md AC1, AC5; docs/specs/wiedervorlage-
+# meilensteine.md AC1 (BR-004, S-012); docs/data-model.md §2.1, §4, §7.
 # architecture.md: "Data-Access" ist die einzige Schreib-/Lesestelle der
 # Bewertungs-Tabellen (single-writer) -- diese Datei IST diese Schicht (M1, kein
 # App-Layer, language: md). Wie apply_migrations.sh/attach_l30d_readonly.sh (S-001)
@@ -10,13 +11,14 @@
 # Dokumentierte Design-Entscheidung (S-002, urspruenglich): ra_milestone existierte erst
 # ab S-005 (jetzt angelegt, 004_ra_milestone.sql). Zwei Stellen im Zustandsautomaten
 # haengen an Meilensteinen:
-#   - BR-004 (aktiv -> geparkt nur mit >=1 Meilenstein)
-#   - OF-10  (geparkt -> verworfen setzt offene Meilensteine auf 'hinfaellig')
-# Beide greifen seit S-005 unveraendert scharf (kein Aenderungsbedarf an dieser Datei
-# -- der Existenz-Check via sqlite_master bleibt als Defensiv-Absicherung bestehen,
-# ist aber gegen jede Migration ab 004_ra_milestone.sql immer wahr). Die
-# Kanten-Topologie selbst (BR-006, AC5-Fokus dieser Story) ist davon unabhaengig und
-# war immer vollstaendig scharf.
+#   - BR-004 (aktiv -> geparkt nur mit >=1 EXTERNEM Meilenstein, seit S-012 scharf
+#     auf responsibility='extern' eingeengt -- siehe set_topic_status-Kommentar)
+#   - OF-10  (geparkt -> verworfen setzt offene Meilensteine auf 'hinfaellig',
+#     unabhaengig von responsibility)
+# Beide greifen seit S-005 scharf (der Existenz-Check via sqlite_master bleibt als
+# Defensiv-Absicherung bestehen, ist aber gegen jede Migration ab 004_ra_milestone.sql
+# immer wahr). Die Kanten-Topologie selbst (BR-006, AC5-Fokus dieser Story) ist davon
+# unabhaengig und war immer vollstaendig scharf.
 #
 # Verbindungs-Idiom (DBA-Review Iteration 2, sqlite/R02 -- Referenz-Pattern fuer alle
 # kommenden FK-tragenden Data-Access-Dateien, ra_run/ra_swot_item/ra_milestone/...):
@@ -154,8 +156,16 @@ ra_topic_valid_transition() {
 # (BR-006, ra_topic_valid_transition). Setzt `discarded_at` gdw. der Zielstatus
 # 'verworfen' ist (BR-005) und `updated_at` immer neu. Kaskaden (nur wenn
 # `ra_milestone` bereits existiert, siehe Datei-Header-Entscheidung):
-#   - aktiv -> geparkt: lehnt ab, wenn 0 Meilensteine existieren (BR-004).
+#   - aktiv -> geparkt: lehnt ab, wenn 0 EXTERNE Meilensteine existieren (BR-004,
+#     wiedervorlage-meilensteine#AC1, S-012). "Extern" ist bewusst enger als der
+#     data-model.md-Kurztext "≥1 Meilenstein": nur responsibility='extern'-
+#     Meilensteine tragen eine Watchlist-Referenz (BR-015) und koennen die
+#     automatische Wiedervorlage (AC3) ueberhaupt ausloesen -- ein rein 'eigen'er
+#     Meilenstein wuerde ein geparktes Thema fuer immer unbeobachtet lassen. Reine
+#     'eigen'-Meilensteine zaehlen daher NICHT fuer dieses Gate.
 #   - geparkt -> verworfen: setzt offene Meilensteine auf 'hinfaellig' (OF-10).
+#     Verwerfen (egal ob direkt aus 'aktiv' oder aus 'geparkt') verlangt selbst
+#     KEINEN Meilenstein (AC1: "nicht beim Verwerfen", BR-005).
 set_topic_status() {
   local db="$1"
   local topic_id="$2"
@@ -185,10 +195,10 @@ set_topic_status() {
 
   if [ "$current" = "aktiv" ] && [ "$new_status" = "geparkt" ]; then
     if sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='ra_milestone';" | grep -qx "ra_milestone"; then
-      local ms_count
-      ms_count="$(sqlite3 "$db" "SELECT COUNT(*) FROM ra_milestone WHERE topic_id = '$topic_id';")"
-      if [ "$ms_count" -lt 1 ]; then
-        echo "FATAL: Statuswechsel 'aktiv' -> 'geparkt' fuer Thema '$topic_id' abgelehnt -- Parken erfordert mindestens 1 Meilenstein (BR-004)." >&2
+      local ms_extern_count
+      ms_extern_count="$(sqlite3 "$db" "SELECT COUNT(*) FROM ra_milestone WHERE topic_id = '$topic_id' AND responsibility = 'extern';")"
+      if [ "$ms_extern_count" -lt 1 ]; then
+        echo "FATAL: Statuswechsel 'aktiv' -> 'geparkt' fuer Thema '$topic_id' abgelehnt -- Parken erfordert mindestens 1 EXTERNEN Meilenstein (BR-004, wiedervorlage-meilensteine#AC1); rein 'eigen'e Meilensteine reichen nicht." >&2
         return 1
       fi
     fi

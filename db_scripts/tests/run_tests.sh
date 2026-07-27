@@ -3,12 +3,19 @@
 # + ra_topic: Themen-Anlage + Zustandsautomat, S-002 + ra_run: versionierte Laeufe +
 # result_hash, S-003 + ra_milestone: Status/Zustaendigkeit/Watchlist-Ref-Pflicht,
 # S-005 + ra_divergence: Divergenz-Berechnung + Materialisierung, S-004 +
-# ra_topic_lock: Advisory-Serialisierungssperre je Thema, S-006).
+# ra_topic_lock: Advisory-Serialisierungssperre je Thema, S-006 + Parken-Gate auf
+# EXTERNE Meilensteine verschaerft, S-012).
 #
 # Rein mechanisches SQL/Shell-Test-Artefakt (M1 ist sprach-neutral, kein App-Layer
 # existiert -- profile.md: language: md). Erfuellt die Spec-Vertragszeile
 # "Tests taggen @trace research-datenmodell#AC<n>[,BR-NNN]" (coder.md-Lesson
 # 2026-07-26: reines SQL/Shell-Test-Transkript reicht, solange es committet ist).
+#
+# Covers (wiedervorlage-meilensteine): AC1 (Parken nur mit >=1 EXTERNEM Meilenstein,
+# BR-004 -- rein 'eigen'e Meilensteine reichen NICHT; Verwerfen (aktiv -> verworfen)
+# verlangt explizit KEINEN Meilenstein; S-012). AC2-AC6 dieser Spec sind NICHT
+# Gegenstand dieser Story (Watchlist-Kopplung/automatische Wiedervorlage/Watchlist-Job
+# existieren noch nicht, siehe wiedervorlage-meilensteine.md).
 #
 # Covers (research-datenmodell): AC1 (Themen-Anlage, BR-001/BR-002, OF-02),
 # AC2 (Versionierte Laeufe: ra_run, BR-007/BR-008/BR-009/BR-013/BR-014, OF-04,
@@ -26,7 +33,9 @@
 # 004_ra_milestone.sql-Header), AC5 (Zustandsautomat, BR-003/BR-004/BR-005/
 # BR-006, OF-10, sqlite/R02-Verbindungs-Idiom, BR-019-busy_timeout-Vorbereitung --
 # BR-004-Gate/OF-10-Kaskade jetzt gegen die echte ra_milestone-Tabelle aus S-005
-# statt einer Test-lokalen Ersatztabelle), AC6 (Migrationen, aus S-001), AC7
+# statt einer Test-lokalen Ersatztabelle; BR-004-Gate seit S-012 auf
+# responsibility='extern' verschaerft, siehe Covers (wiedervorlage-meilensteine)
+# oben), AC6 (Migrationen, aus S-001), AC7
 # (Nebenlaeufigkeit: ra_topic_lock, BR-019 Advisory-Lock je Thema + atomare
 # ON CONFLICT..WHERE-Uebernahme, E2 Stale-Ablauf via expires_at (kein Dauer-Deadlock),
 # BEGIN IMMEDIATE+busy_timeout-Reihenfolge, security/R03 -- inkl. echtem Test mit ZWEI
@@ -395,7 +404,9 @@ check_rejected "verworfen" "verworfen" "verworfen -> verworfen ebenfalls kein ge
 
 echo "== @trace research-datenmodell#AC5,BR-006 -- set_topic_status fuehrt den Wechsel end-to-end aus =="
 TID_C="$(create_topic "$TOPIC_DB" "Drittes Thema")"
-sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, description, responsibility, status) VALUES ('$TID_C', 'Meilenstein fuer Thema C', 'eigen', 'offen');"
+# responsibility='extern' (statt 'eigen'): seit S-012 verlangt das BR-004-Gate
+# mindestens einen EXTERNEN Meilenstein (wiedervorlage-meilensteine#AC1).
+sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, description, responsibility, status, watch_ref) VALUES ('$TID_C', 'Meilenstein fuer Thema C', 'extern', 'offen', 'watchlist-item-c');"
 if set_topic_status "$TOPIC_DB" "$TID_C" "geparkt" 2> "$TMP/set-c.err"; then
   ok "set_topic_status fuehrt die erlaubte Kante aktiv -> geparkt aus"
 else
@@ -509,7 +520,10 @@ fi
 
 echo "== @trace research-datenmodell#AC5,OF-10 -- geparkt -> verworfen setzt offene Meilensteine auf 'hinfaellig' =="
 TID_E="$(create_topic "$TOPIC_DB" "Fuenftes Thema")"
-sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, description, responsibility, status) VALUES ('$TID_E', 'Offener Meilenstein', 'eigen', 'offen'), ('$TID_E', 'Erfuellter Meilenstein', 'eigen', 'erfuellt');"
+# 'Offener Meilenstein' ist bewusst 'extern' (statt 'eigen'): seit S-012 verlangt das
+# BR-004-Gate mindestens einen EXTERNEN Meilenstein zum Parken (AC1); die OF-10-
+# Kaskade selbst bleibt responsibility-agnostisch (prueft nur status='offen').
+sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, description, responsibility, status, watch_ref) VALUES ('$TID_E', 'Offener Meilenstein', 'extern', 'offen', 'watchlist-item-e'), ('$TID_E', 'Erfuellter Meilenstein', 'eigen', 'erfuellt', NULL);"
 set_topic_status "$TOPIC_DB" "$TID_E" "geparkt" > /dev/null
 set_topic_status "$TOPIC_DB" "$TID_E" "verworfen" > /dev/null
 MS_STATUSES="$(sqlite3 "$TOPIC_DB" "SELECT status FROM ra_milestone WHERE topic_id = '$TID_E' ORDER BY status;")"
@@ -519,7 +533,7 @@ else
   bad "erwartete Meilenstein-Staende 'erfuellt'+'hinfaellig', bekam: $MS_STATUSES"
 fi
 
-echo "== @trace research-datenmodell#AC5,BR-004 -- aktiv -> geparkt Gate lehnt ab ohne mindestens 1 Meilenstein =="
+echo "== @trace research-datenmodell#AC5,BR-004,wiedervorlage-meilensteine#AC1 -- aktiv -> geparkt Gate lehnt ab ohne mindestens 1 Meilenstein =="
 TID_F="$(create_topic "$TOPIC_DB" "Sechstes Thema")"
 set +e
 set_topic_status "$TOPIC_DB" "$TID_F" "geparkt" > /dev/null 2> "$TMP/gate-f.err"
@@ -530,6 +544,49 @@ if [ "$GATE_F_RC" -ne 0 ] && [ "$STATUS_F" = "aktiv" ] && grep -qi "BR-004" "$TM
   ok "aktiv -> geparkt ohne jeden Meilenstein wird abgelehnt (BR-004)"
 else
   bad "aktiv -> geparkt ohne Meilenstein haette abgelehnt werden muessen, rc=$GATE_F_RC status='$STATUS_F': $(cat "$TMP/gate-f.err")"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC1 -- aktiv -> geparkt mit NUR 'eigen'-Meilenstein(en) wird abgelehnt (0 externe) =="
+TID_G="$(create_topic "$TOPIC_DB" "Siebtes Thema")"
+sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, description, responsibility, status) VALUES ('$TID_G', 'Nur eigener Meilenstein', 'eigen', 'offen');"
+set +e
+set_topic_status "$TOPIC_DB" "$TID_G" "geparkt" > /dev/null 2> "$TMP/gate-g.err"
+GATE_G_RC=$?
+set -e
+STATUS_G="$(sqlite3 "$TOPIC_DB" "SELECT status FROM ra_topic WHERE id = '$TID_G';")"
+if [ "$GATE_G_RC" -ne 0 ] && [ "$STATUS_G" = "aktiv" ] && grep -qi "BR-004" "$TMP/gate-g.err"; then
+  ok "aktiv -> geparkt mit nur 'eigen'-Meilenstein (0 externe) wird abgelehnt (AC1/BR-004)"
+else
+  bad "aktiv -> geparkt mit nur 'eigen'-Meilenstein haette abgelehnt werden muessen, rc=$GATE_G_RC status='$STATUS_G': $(cat "$TMP/gate-g.err")"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC1 -- aktiv -> geparkt mit >=1 externem Meilenstein wird angenommen =="
+TID_H="$(create_topic "$TOPIC_DB" "Achtes Thema")"
+sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, description, responsibility, status, watch_ref) VALUES ('$TID_H', 'Externer Meilenstein', 'extern', 'offen', 'watchlist-item-h');"
+if set_topic_status "$TOPIC_DB" "$TID_H" "geparkt" 2> "$TMP/gate-h.err"; then
+  ok "aktiv -> geparkt mit >=1 externem Meilenstein wird angenommen (AC1)"
+else
+  bad "aktiv -> geparkt mit externem Meilenstein haette angenommen werden sollen: $(cat "$TMP/gate-h.err")"
+fi
+STATUS_H="$(sqlite3 "$TOPIC_DB" "SELECT status FROM ra_topic WHERE id = '$TID_H';")"
+if [ "$STATUS_H" = "geparkt" ]; then
+  ok "Status von Thema H ist nach dem Wechsel tatsaechlich 'geparkt'"
+else
+  bad "Status von Thema H war '$STATUS_H', erwartet 'geparkt'"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC1 -- aktiv -> verworfen (Verwerfen) verlangt KEINEN Meilenstein =="
+TID_I="$(create_topic "$TOPIC_DB" "Neuntes Thema")"
+if set_topic_status "$TOPIC_DB" "$TID_I" "verworfen" 2> "$TMP/discard-i.err"; then
+  ok "aktiv -> verworfen ohne jeden Meilenstein wird angenommen -- Verwerfen ist NICHT an Meilensteine gekoppelt (AC1)"
+else
+  bad "aktiv -> verworfen ohne Meilenstein haette angenommen werden sollen: $(cat "$TMP/discard-i.err")"
+fi
+STATUS_I="$(sqlite3 "$TOPIC_DB" "SELECT status FROM ra_topic WHERE id = '$TID_I';")"
+if [ "$STATUS_I" = "verworfen" ]; then
+  ok "Status von Thema I ist nach dem Verwerfen tatsaechlich 'verworfen'"
+else
+  bad "Status von Thema I war '$STATUS_I', erwartet 'verworfen'"
 fi
 
 echo "== @trace research-datenmodell#AC4,BR-015 -- responsibility='extern' erfordert watch_ref (CHECK, roh) =="

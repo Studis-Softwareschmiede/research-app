@@ -135,7 +135,7 @@ last30days-Store  soft◄── ra_run.l30d_source_ref, ra_milestone.watch_ref  
 - **BR-001** — Die Themen-ID (`ra_topic.id`) ist **stabil und eindeutig** (PK); sie ändert sich über Läufe, Artefakte und PM-Anstoss hinweg nie. Duplikat-ID wird abgelehnt.
 - **BR-002** — `ra_topic.title` darf nicht leer sein: `length(trim(title)) >= 1`. Leerer Themen-String wird abgelehnt.
 - **BR-003** — `ra_topic.status ∈ {aktiv, geparkt, im_pm, verworfen}`.
-- **BR-004** — `status='geparkt'` ist nur zulässig, wenn das Thema **≥1 Meilenstein** hat (Parken-Bedingung).
+- **BR-004** — `status='geparkt'` ist nur zulässig, wenn das Thema **≥1 externen Meilenstein** (`responsibility='extern'`) hat (Parken-Bedingung, präzisiert durch `wiedervorlage-meilensteine#AC1`, S-012); rein `eigen`e Meilensteine genügen nicht, da nur externe Meilensteine die Watchlist-Kopplung (BR-015) für die automatische Wiedervorlage tragen.
 - **BR-005** — `status='verworfen'` ist **Endzustand ohne Meilenstein** und **dauerhaft von der Wiedervorlage ausgeschlossen** (terminal). `discarded_at` ist dann gesetzt.
 - **BR-006** — Statusänderungen folgen ausschließlich dem Zustandsautomaten (§7); andere Übergänge werden abgelehnt.
 - **BR-007** — `ra_run.version` ist **monoton steigend und eindeutig** je (`topic_id`,`kind`); keine Doppel-Version.
@@ -183,7 +183,7 @@ Eingabe: Vorlauf `A` (from), Folgelauf `B` (to), gleiches Thema, gleiche Art.
              (Anlage)
                 │
                 ▼
-            ┌────────┐   ≥1 Meilenstein     ┌─────────┐
+            ┌────────┐   ≥1 externer MS     ┌─────────┐
             │ aktiv  │ ───────────────────▶ │ geparkt │
             │        │ ◀─────────────────── │         │
             └────────┘   Wiedervorlage       └─────────┘
@@ -198,7 +198,7 @@ Eingabe: Vorlauf `A` (from), Folgelauf `B` (to), gleiches Thema, gleiche Art.
 
 Gesicherte Kanten:
 - `→ aktiv` bei Anlage.
-- `aktiv → geparkt` nur mit ≥1 Meilenstein (BR-004).
+- `aktiv → geparkt` nur mit ≥1 externem Meilenstein (BR-004).
 - `geparkt → aktiv` durch Wiedervorlage (Watchlist: Meilenstein erfüllt / Delta; BR-020).
 - `aktiv → im_pm` durch manuelles Entscheidungs-Gate + PM-Anstoss (C-004: nie automatisch).
 - `aktiv → verworfen` nur ohne Meilenstein (BR-005); terminal.
