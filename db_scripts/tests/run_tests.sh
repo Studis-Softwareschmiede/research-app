@@ -2,7 +2,7 @@
 # run_tests.sh — Self-Test fuer db_scripts (Migrations-Grundgeruest + Fremd-Store-Schutz
 # + ra_topic: Themen-Anlage + Zustandsautomat, S-002 + ra_run: versionierte Laeufe +
 # result_hash, S-003 + ra_milestone: Status/Zustaendigkeit/Watchlist-Ref-Pflicht,
-# S-005).
+# S-005 + ra_divergence: Divergenz-Berechnung + Materialisierung, S-004).
 #
 # Rein mechanisches SQL/Shell-Test-Artefakt (M1 ist sprach-neutral, kein App-Layer
 # existiert -- profile.md: language: md). Erfuellt die Spec-Vertragszeile
@@ -11,17 +11,22 @@
 #
 # Covers (research-datenmodell): AC1 (Themen-Anlage, BR-001/BR-002, OF-02),
 # AC2 (Versionierte Laeufe: ra_run, BR-007/BR-008/BR-009/BR-013/BR-014, OF-04,
-# §5-Hash-Bildungsregel, security/R03), AC4 (Meilenstein-Entitaet: BR-015
+# §5-Hash-Bildungsregel, security/R03), AC3 (Divergenz: ra_divergence,
+# BR-010 is_empty gdw. gleicher Hash + nativer CHECK-Backstop (is_empty=1 erzwingt
+# swot_delta/milestone_status_delta=NULL, 005_ra_divergence.sql), BR-011 nur
+# gleiches Thema+gleiche Art, BR-019 create_divergence setzt PRAGMA busy_timeout VOR
+# BEGIN IMMEDIATE (inkl. Leak-Freiheit der per RETURNING eingesammelten id, Reviewer-
+# Fund Iteration 2), SWOT-Item-Delta (category,claim_key) + Kategorie-Rollup,
+# Meilenstein-Status-Delta, UNIQUE(from_run_id,to_run_id), security/R03 -- SWOT-/
+# Meilenstein-Tupel werden wie bei compute_result_hash direkt uebergeben, kein
+# ra_swot_item-Tabellenzugriff, siehe divergence.sh-Datei-Header), AC4 (Meilenstein-Entitaet: BR-015
 # Zustaendigkeit extern/eigen + watch_ref-Pflicht bei extern, BR-016 Status-Enum --
 # alles als rohe CHECK-Constraints getestet, kein Data-Access-Wrapper noetig, siehe
 # 004_ra_milestone.sql-Header), AC5 (Zustandsautomat, BR-003/BR-004/BR-005/
 # BR-006, OF-10, sqlite/R02-Verbindungs-Idiom, BR-019-busy_timeout-Vorbereitung --
 # BR-004-Gate/OF-10-Kaskade jetzt gegen die echte ra_milestone-Tabelle aus S-005
 # statt einer Test-lokalen Ersatztabelle), AC6 (Migrationen, aus S-001), AC8
-# (Fremd-Store-Schutz, aus S-001). AC3 (ra_divergence) bleibt S-004 --
-# compute_result_hash wird deshalb hier weiterhin nur mit direkt uebergebenen
-# SWOT-/Meilenstein-Tupeln getestet (kein ra_swot_item-Tabellenzugriff, siehe
-# run.sh-Datei-Header).
+# (Fremd-Store-Schutz, aus S-001).
 #
 # Aufruf: db_scripts/tests/run_tests.sh
 set -euo pipefail
@@ -38,6 +43,8 @@ source "$DB_SCRIPTS_DIR/lib/attach_l30d_readonly.sh"
 source "$DB_SCRIPTS_DIR/lib/topic.sh"
 # shellcheck source=../lib/run.sh
 source "$DB_SCRIPTS_DIR/lib/run.sh"
+# shellcheck source=../lib/divergence.sh
+source "$DB_SCRIPTS_DIR/lib/divergence.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -700,6 +707,189 @@ if [ -z "$REF_VAL" ]; then
   ok "ohne uebergebene l30d_source_ref bleibt die Spalte NULL"
 else
   bad "erwartete NULL l30d_source_ref, bekam '$REF_VAL'"
+fi
+
+echo "== @trace research-datenmodell#AC3,BR-012 -- compute_swot_delta bildet Einzel-Item-Differenz + Kategorie-Rollup =="
+SWOT_FROM="$(printf 'strength|marktfuehrer\nopportunity|regulierung')"
+SWOT_TO="$(printf 'strength|marktfuehrer\nthreat|wettbewerb\nthreat|preisdruck')"
+SWOT_DELTA="$(compute_swot_delta "$SWOT_FROM" "$SWOT_TO" 2> "$TMP/swot-delta.err")"
+if echo "$SWOT_DELTA" | grep -q '"added":\[\["threat","preisdruck"\],\["threat","wettbewerb"\]\]' \
+  && echo "$SWOT_DELTA" | grep -q '"removed":\[\["opportunity","regulierung"\]\]' \
+  && echo "$SWOT_DELTA" | grep -q '"opportunity":{"added":0,"removed":1}' \
+  && echo "$SWOT_DELTA" | grep -q '"threat":{"added":2,"removed":0}'; then
+  ok "compute_swot_delta liefert added/removed (category,claim_key)-Paare sortiert + Kategorie-Rollup (AC3, BR-012)"
+else
+  bad "compute_swot_delta lieferte unerwartetes JSON: $SWOT_DELTA ($(cat "$TMP/swot-delta.err"))"
+fi
+
+UNCHANGED_ITEM_CATEGORY="$(echo "$SWOT_DELTA" | grep -o '"strength"[^}]*}' || true)"
+if [ -z "$UNCHANGED_ITEM_CATEGORY" ]; then
+  ok "unveraenderter SWOT-Claim (strength|marktfuehrer, in beiden Laeufen identisch) erscheint NICHT im by_category-Rollup"
+else
+  bad "by_category haette 'strength' nicht enthalten sollen (kein Delta dort): $SWOT_DELTA"
+fi
+
+EMPTY_SWOT_DELTA="$(compute_swot_delta "$SWOT_FROM" "$SWOT_FROM")"
+if [ "$EMPTY_SWOT_DELTA" = '{"added":[],"removed":[],"by_category":{}}' ]; then
+  ok "identische SWOT-Staende erzeugen ein leeres Delta (added/removed=[], by_category={})"
+else
+  bad "identische SWOT-Staende haetten ein leeres Delta erzeugen muessen, bekam: $EMPTY_SWOT_DELTA"
+fi
+
+echo "== @trace research-datenmodell#AC3 -- compute_milestone_delta bildet geaenderte (milestone_stable_key,status)-Tripel =="
+MS_FROM="$(printf '1|offen|eigen\n2|offen|extern')"
+MS_TO="$(printf '1|erfuellt|eigen\n2|offen|extern\n3|offen|eigen')"
+MS_DELTA="$(compute_milestone_delta "$MS_FROM" "$MS_TO" 2> "$TMP/ms-delta.err")"
+if echo "$MS_DELTA" | grep -q '{"milestone_stable_key":"1","from_status":"offen","to_status":"erfuellt"}' \
+  && echo "$MS_DELTA" | grep -q '{"milestone_stable_key":"3","from_status":null,"to_status":"offen"}' \
+  && ! echo "$MS_DELTA" | grep -q '"milestone_stable_key":"2"'; then
+  ok "compute_milestone_delta zeigt geaenderten (id=1) + neu hinzugekommenen (id=3) Meilenstein, unveraenderten (id=2) NICHT (AC3)"
+else
+  bad "compute_milestone_delta lieferte unerwartetes JSON: $MS_DELTA ($(cat "$TMP/ms-delta.err"))"
+fi
+
+EMPTY_MS_DELTA="$(compute_milestone_delta "$MS_FROM" "$MS_FROM")"
+if [ "$EMPTY_MS_DELTA" = '{"changed":[]}' ]; then
+  ok "identischer Meilenstein-Stand erzeugt ein leeres Delta (changed=[])"
+else
+  bad "identischer Meilenstein-Stand haette ein leeres Delta erzeugen muessen, bekam: $EMPTY_MS_DELTA"
+fi
+
+echo "== @trace research-datenmodell#AC3,BR-019 -- create_divergence setzt PRAGMA busy_timeout VOR BEGIN IMMEDIATE (Reviewer-Fund Iteration 2, Critical) =="
+DIVERGENCE_SRC="$(declare -f create_divergence)"
+if echo "$DIVERGENCE_SRC" | grep -q "PRAGMA busy_timeout"; then
+  ok "create_divergence() setzt PRAGMA busy_timeout auf der BEGIN IMMEDIATE-Verbindung"
+else
+  bad "create_divergence() sollte PRAGMA busy_timeout an der BEGIN IMMEDIATE-Verbindung setzen -- Regression des Critical-Fundes (Reviewer Iteration 2)"
+fi
+
+DIV_BUSY_ORDER_CHECK="$(echo "$DIVERGENCE_SRC" | grep -n "PRAGMA busy_timeout\|BEGIN IMMEDIATE")"
+DIV_BUSY_LINE="$(echo "$DIV_BUSY_ORDER_CHECK" | grep "PRAGMA busy_timeout" | head -1 | cut -d: -f1)"
+DIV_BEGIN_LINE="$(echo "$DIV_BUSY_ORDER_CHECK" | grep "BEGIN IMMEDIATE" | head -1 | cut -d: -f1)"
+if [ -n "$DIV_BUSY_LINE" ] && [ -n "$DIV_BEGIN_LINE" ] && [ "$DIV_BUSY_LINE" -lt "$DIV_BEGIN_LINE" ]; then
+  ok "PRAGMA busy_timeout steht VOR BEGIN IMMEDIATE in derselben Verbindung (create_divergence)"
+else
+  bad "PRAGMA busy_timeout muss VOR BEGIN IMMEDIATE stehen (create_divergence, busy_line=$DIV_BUSY_LINE begin_line=$DIV_BEGIN_LINE)"
+fi
+
+echo "== @trace research-datenmodell#AC3,BR-010 -- create_divergence: gleicher Hash ergibt is_empty=1 =="
+DIV_TOPIC="$(create_topic "$TOPIC_DB" "Divergenz-Thema")"
+DIV_HASH="$(compute_result_hash "weiterverfolgen" "$SWOT_FROM" "$MS_FROM")"
+DIV_RUN_1="$(create_run "$TOPIC_DB" "$DIV_TOPIC" "recherche" "$DIV_HASH" "weiterverfolgen" 1 0)"
+DIV_RUN_1_ID="${DIV_RUN_1%%|*}"
+DIV_RUN_2="$(create_run "$TOPIC_DB" "$DIV_TOPIC" "recherche" "$DIV_HASH" "weiterverfolgen" 1 0)"
+DIV_RUN_2_ID="${DIV_RUN_2%%|*}"
+DIV_ID_EMPTY="$(create_divergence "$TOPIC_DB" "$DIV_RUN_1_ID" "$DIV_RUN_2_ID" "" "" 2> "$TMP/div-empty.err")"
+if [ -n "$DIV_ID_EMPTY" ]; then
+  ok "create_divergence legt eine Zeile fuer zwei Laeufe mit identischem Hash an"
+else
+  bad "create_divergence haette eine Zeile anlegen sollen: $(cat "$TMP/div-empty.err")"
+fi
+if [[ "$DIV_ID_EMPTY" =~ ^[0-9]+$ ]]; then
+  ok "create_divergence-Rueckgabewert ist eine reine Zahl -- der per '.output /dev/null' unterdrueckte PRAGMA-busy_timeout-Rueckgabewert (5000) leakt nicht in die eingesammelte id"
+else
+  bad "create_divergence-Rueckgabewert haette eine reine Zahl sein sollen, bekam '$DIV_ID_EMPTY' -- PRAGMA-Rueckgabewert-Leak?"
+fi
+DIV_ROW_EMPTY="$(sqlite3 -separator '|' "$TOPIC_DB" "SELECT is_empty, recommendation_changed FROM ra_divergence WHERE id = $DIV_ID_EMPTY;")"
+if [ "$DIV_ROW_EMPTY" = "1|0" ]; then
+  ok "identischer result_hash ergibt is_empty=1 und recommendation_changed=0 (BR-010, idempotenter Wiederholungslauf)"
+else
+  bad "erwartete is_empty=1|recommendation_changed=0, bekam '$DIV_ROW_EMPTY'"
+fi
+
+echo "== @trace research-datenmodell#AC3,BR-010 -- create_divergence: geaenderter Hash + Empfehlung ergibt is_empty=0 =="
+DIV_HASH_2="$(compute_result_hash "parken" "$SWOT_TO" "$MS_TO")"
+DIV_RUN_3="$(create_run "$TOPIC_DB" "$DIV_TOPIC" "recherche" "$DIV_HASH_2" "parken" 1 0)"
+DIV_RUN_3_ID="${DIV_RUN_3%%|*}"
+DIV_ID_CHANGED="$(create_divergence "$TOPIC_DB" "$DIV_RUN_2_ID" "$DIV_RUN_3_ID" "$SWOT_DELTA" "$MS_DELTA" 2> "$TMP/div-changed.err")"
+DIV_ROW_CHANGED="$(sqlite3 -separator '|' "$TOPIC_DB" "SELECT is_empty, recommendation_changed, swot_delta, milestone_status_delta FROM ra_divergence WHERE id = $DIV_ID_CHANGED;")"
+EXPECTED_CHANGED="0|1|$SWOT_DELTA|$MS_DELTA"
+if [ "$DIV_ROW_CHANGED" = "$EXPECTED_CHANGED" ]; then
+  ok "unterschiedlicher Hash+Empfehlung ergibt is_empty=0/recommendation_changed=1, swot_delta/milestone_status_delta werden unveraendert materialisiert (BR-010, AC3)"
+else
+  bad "erwartete '$EXPECTED_CHANGED', bekam '$DIV_ROW_CHANGED' ($(cat "$TMP/div-changed.err"))"
+fi
+
+echo "== @trace research-datenmodell#AC3,BR-011 -- Divergenz nur zwischen Laeufen desselben Themas =="
+OTHER_TOPIC="$(create_topic "$TOPIC_DB" "Anderes Thema")"
+OTHER_RUN="$(create_run "$TOPIC_DB" "$OTHER_TOPIC" "recherche" "$DIV_HASH" "weiterverfolgen" 1 0)"
+OTHER_RUN_ID="${OTHER_RUN%%|*}"
+set +e
+CROSS_TOPIC_OUT="$(create_divergence "$TOPIC_DB" "$DIV_RUN_1_ID" "$OTHER_RUN_ID" "" "" 2> "$TMP/cross-topic.err")"
+CROSS_TOPIC_RC=$?
+set -e
+if [ "$CROSS_TOPIC_RC" -ne 0 ] && [ -z "$CROSS_TOPIC_OUT" ] && grep -qi "BR-011" "$TMP/cross-topic.err"; then
+  ok "Laeufe zweier verschiedener Themen werden abgelehnt (BR-011)"
+else
+  bad "themenuebergreifende Divergenz haette abgelehnt werden muessen, rc=$CROSS_TOPIC_RC out='$CROSS_TOPIC_OUT': $(cat "$TMP/cross-topic.err")"
+fi
+
+echo "== @trace research-datenmodell#AC3,BR-011 -- Divergenz nur zwischen Laeufen derselben Art =="
+DIV_RUN_PM="$(create_run "$TOPIC_DB" "$DIV_TOPIC" "pm" "$DIV_HASH" "weiterverfolgen" 1 0)"
+DIV_RUN_PM_ID="${DIV_RUN_PM%%|*}"
+set +e
+CROSS_KIND_OUT="$(create_divergence "$TOPIC_DB" "$DIV_RUN_1_ID" "$DIV_RUN_PM_ID" "" "" 2> "$TMP/cross-kind.err")"
+CROSS_KIND_RC=$?
+set -e
+if [ "$CROSS_KIND_RC" -ne 0 ] && [ -z "$CROSS_KIND_OUT" ] && grep -qi "BR-011" "$TMP/cross-kind.err"; then
+  ok "Laeufe unterschiedlicher Art (recherche vs. pm) werden abgelehnt (BR-011)"
+else
+  bad "artuebergreifende Divergenz haette abgelehnt werden muessen, rc=$CROSS_KIND_RC out='$CROSS_KIND_OUT': $(cat "$TMP/cross-kind.err")"
+fi
+
+echo "== @trace research-datenmodell#AC3 -- UNIQUE(from_run_id,to_run_id) ist der native Backstop gegen doppelte Divergenz =="
+set +e
+DUP_DIV_OUT="$(create_divergence "$TOPIC_DB" "$DIV_RUN_1_ID" "$DIV_RUN_2_ID" "" "" 2> "$TMP/dup-div.err")"
+DUP_DIV_RC=$?
+set -e
+if [ "$DUP_DIV_RC" -ne 0 ] && [ -z "$DUP_DIV_OUT" ]; then
+  ok "erneute Divergenz-Anlage fuer dasselbe Laufpaar wird per UNIQUE(from_run_id,to_run_id) abgelehnt"
+else
+  bad "doppelte Divergenz-Anlage haette abgelehnt werden muessen, rc=$DUP_DIV_RC out='$DUP_DIV_OUT'"
+fi
+
+echo "== @trace research-datenmodell#AC3,security/R03 -- ungueltige/fremde run-id wird vor SQL-Interpolation abgelehnt =="
+set +e
+INJECT_DIV_OUT="$(create_divergence "$TOPIC_DB" "1; DROP TABLE ra_divergence;--" "$DIV_RUN_2_ID" "" "" 2> "$TMP/inject-div.err")"
+INJECT_DIV_RC=$?
+set -e
+DIV_TABLE_STILL_THERE="$(sqlite3 "$TOPIC_DB" "SELECT name FROM sqlite_master WHERE type='table' AND name='ra_divergence';")"
+if [ "$INJECT_DIV_RC" -ne 0 ] && [ -z "$INJECT_DIV_OUT" ] && grep -qi "security/R03" "$TMP/inject-div.err" && [ "$DIV_TABLE_STILL_THERE" = "ra_divergence" ]; then
+  ok "manipulierte from-run-id wird per Formatpruefung abgelehnt, bevor sie ins SQL interpoliert wird (security/R03)"
+else
+  bad "manipulierte from-run-id haette abgelehnt werden muessen, rc=$INJECT_DIV_RC out='$INJECT_DIV_OUT' table='$DIV_TABLE_STILL_THERE': $(cat "$TMP/inject-div.err")"
+fi
+
+echo "== @trace research-datenmodell#AC3 -- nicht existierende run-id wird abgelehnt =="
+set +e
+MISSING_RUN_OUT="$(create_divergence "$TOPIC_DB" "999999" "$DIV_RUN_2_ID" "" "" 2> "$TMP/missing-run.err")"
+MISSING_RUN_RC=$?
+set -e
+if [ "$MISSING_RUN_RC" -ne 0 ] && [ -z "$MISSING_RUN_OUT" ] && grep -qi "existiert nicht" "$TMP/missing-run.err"; then
+  ok "nicht existierende from-run-id wird abgelehnt"
+else
+  bad "nicht existierende from-run-id haette abgelehnt werden muessen, rc=$MISSING_RUN_RC out='$MISSING_RUN_OUT': $(cat "$TMP/missing-run.err")"
+fi
+
+echo "== @trace research-datenmodell#AC3,BR-010 -- nativer CHECK-Backstop: is_empty=1 erzwingt swot_delta/milestone_status_delta=NULL (Reviewer-Fund Iteration 2, Important) =="
+set +e
+CHECK_BACKSTOP_ERR="$(sqlite3 "$TOPIC_DB" "INSERT INTO ra_divergence (topic_id, kind, from_run_id, to_run_id, is_empty, recommendation_changed, swot_delta, milestone_status_delta) VALUES ('$DIV_TOPIC', 'recherche', $DIV_RUN_1_ID, $DIV_RUN_3_ID, 1, 0, '{}', NULL);" 2>&1)"
+CHECK_BACKSTOP_RC=$?
+set -e
+if [ "$CHECK_BACKSTOP_RC" -ne 0 ] && echo "$CHECK_BACKSTOP_ERR" | grep -qi "CHECK"; then
+  ok "nativer CHECK in 005_ra_divergence.sql lehnt is_empty=1 mit gesetztem swot_delta ab (Konsistenz-Backstop, BR-010)"
+else
+  bad "CHECK-Backstop haette is_empty=1 + gesetztes swot_delta ablehnen sollen, rc=$CHECK_BACKSTOP_RC: $CHECK_BACKSTOP_ERR"
+fi
+
+set +e
+CHECK_BACKSTOP_MS_ERR="$(sqlite3 "$TOPIC_DB" "INSERT INTO ra_divergence (topic_id, kind, from_run_id, to_run_id, is_empty, recommendation_changed, swot_delta, milestone_status_delta) VALUES ('$DIV_TOPIC', 'recherche', $DIV_RUN_1_ID, $DIV_RUN_3_ID, 1, 0, NULL, '{}');" 2>&1)"
+CHECK_BACKSTOP_MS_RC=$?
+set -e
+if [ "$CHECK_BACKSTOP_MS_RC" -ne 0 ] && echo "$CHECK_BACKSTOP_MS_ERR" | grep -qi "CHECK"; then
+  ok "nativer CHECK in 005_ra_divergence.sql lehnt is_empty=1 mit gesetztem milestone_status_delta ab (Konsistenz-Backstop, BR-010)"
+else
+  bad "CHECK-Backstop haette is_empty=1 + gesetztes milestone_status_delta ablehnen sollen, rc=$CHECK_BACKSTOP_MS_RC: $CHECK_BACKSTOP_MS_ERR"
 fi
 
 echo

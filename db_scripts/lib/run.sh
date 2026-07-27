@@ -11,13 +11,16 @@
 # setzt `PRAGMA foreign_keys = ON;` als eigene erste Anweisung dieser frischen
 # CLI-Session (das PRAGMA persistiert NICHT ueber Verbindungen hinweg).
 #
-# Scope-Grenze (S-003, AC2): ra_swot_item und ra_milestone existieren erst ab
-# S-004/S-005. compute_result_hash() liest deshalb NICHT selbst aus diesen (noch
-# nicht existenten) Tabellen, sondern nimmt die strukturierten Eingaben (SWOT-Paare,
-# Meilenstein-Tripel) als Parameter entgegen -- der zukuenftige Aufrufer (Recherche-
-# Skill, S-008 ff.) liefert sie, sobald diese Tabellen existieren. Das entspricht der
-# Bildungsregel selbst (data-model.md §5): sie ist eine reine Funktion ueber
-# strukturierte Werte, keine SQL-Query gegen ein bestimmtes Schema.
+# Scope-Grenze (S-003, AC2): ra_swot_item existiert weiterhin NICHT (auch nach
+# S-004/S-005 -- ra_milestone kam mit S-005, ra_swot_item bleibt bewusst aussen
+# vor, siehe db_scripts/lib/divergence.sh-Datei-Header, S-004). compute_result_hash()
+# liest deshalb NICHT selbst aus einer solchen (nicht existenten) Tabelle, sondern
+# nimmt die strukturierten Eingaben (SWOT-Paare, Meilenstein-Tripel) als Parameter
+# entgegen -- der zukuenftige Aufrufer (Recherche-Skill, S-008 ff.) liefert sie,
+# sobald diese Datenquelle existiert. Das entspricht der Bildungsregel selbst
+# (data-model.md §5): sie ist eine reine Funktion ueber strukturierte Werte, keine
+# SQL-Query gegen ein bestimmtes Schema. divergence.sh (S-004) uebernimmt exakt
+# dasselbe Parameter-Format fuer seine compute_swot_delta()/compute_milestone_delta().
 
 # compute_result_hash <recommendation> <swot-pairs> <milestone-triples>
 # Bildet den Ergebnisstand-Hash (BR-009, §5): kanonische JSON-Serialisierung ueber
