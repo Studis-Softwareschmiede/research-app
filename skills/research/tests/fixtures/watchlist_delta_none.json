@@ -1,0 +1,11 @@
+{
+  "topic": "watchlist-item-1",
+  "status": "ok",
+  "current_run_id": 42,
+  "previous_run_id": 41,
+  "new": 0,
+  "continued": 4,
+  "dropped": 0,
+  "sources": {},
+  "findings": {"new": [], "continued": [], "dropped": []}
+}

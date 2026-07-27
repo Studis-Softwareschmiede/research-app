@@ -1,0 +1,11 @@
+{
+  "topic": "watchlist-item-1",
+  "status": "ok",
+  "current_run_id": 42,
+  "previous_run_id": 41,
+  "new": 3,
+  "continued": 1,
+  "dropped": 0,
+  "sources": {"reddit": 2, "hackernews": 1},
+  "findings": {"new": [], "continued": [], "dropped": []}
+}

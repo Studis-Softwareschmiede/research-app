@@ -14,9 +14,17 @@
 #
 # Covers (wiedervorlage-meilensteine): AC1 (Parken nur mit >=1 EXTERNEM Meilenstein,
 # BR-004 -- rein 'eigen'e Meilensteine reichen NICHT; Verwerfen (aktiv -> verworfen)
-# verlangt explizit KEINEN Meilenstein; S-012). AC2-AC6 dieser Spec sind NICHT
-# Gegenstand dieser Story (Watchlist-Kopplung/automatische Wiedervorlage/Watchlist-Job
-# existieren noch nicht, siehe wiedervorlage-meilensteine.md).
+# verlangt explizit KEINEN Meilenstein; S-012). AC2 (Watchlist-Kopplung) + AC6
+# (Nebenlaeufigkeit) sind seit S-013 implementiert (Watchlist-Pass,
+# db_scripts/lib/milestone.sh#list_watchlist_candidates,
+# skills/research/scripts/watchlist_pass.sh) -- getestet in
+# skills/research/tests/run_tests.sh (dort eigener "Covers
+# (wiedervorlage-meilensteine)"-Block, gleiches Muster wie milestone.sh#
+# create_milestone/list_milestones/set_milestone_status, die ebenfalls NICHT
+# hier, sondern dort getestet werden). AC3-AC5 dieser Spec sind weiterhin NICHT
+# Gegenstand dieser Datei (automatische Wiedervorlage/volle
+# "manuell zu pruefen"-Markierung/Verwerfen-Kaskade der Watchlist selbst sind
+# S-014/S-015-Folgestories).
 #
 # Covers (research-datenmodell): AC1 (Themen-Anlage, BR-001/BR-002, OF-02),
 # AC2 (Versionierte Laeufe: ra_run, BR-007/BR-008/BR-009/BR-013/BR-014, OF-04,

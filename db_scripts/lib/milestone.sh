@@ -8,6 +8,14 @@
 # (ra_milestone-Feldliste), §4 BR-015/BR-016 (bereits als CHECK-Constraints in
 # 004_ra_milestone.sql durchgesetzt, S-005).
 #
+# Seit S-013 zusaetzlich Quelle: docs/specs/wiedervorlage-meilensteine.md AC2
+# ("Externe Meilensteine tragen eine Watchlist-Referenz (BR-015) und werden vom
+# Watchlist-Job geprueft") -- list_watchlist_candidates() ist die reine
+# Lesefunktion, die skills/research/scripts/watchlist_pass.sh (Watchlist-Pass,
+# architecture.md-Komponente "Watchlist/Wiedervorlage") mit den pruefbaren
+# externen Meilensteinen versorgt, ohne dass der Pass selbst SQLite beruehrt
+# (Boundary-Regel).
+#
 # architecture.md: "Data-Access" ist die einzige Schreib-/Lesestelle der
 # Bewertungs-Tabellen (single-writer) -- diese Datei IST diese Schicht, analog zu
 # topic.sh/run.sh/divergence.sh/topic_lock.sh (S-002..S-006). Bis S-005 existierten
@@ -135,6 +143,56 @@ list_milestones() {
   fi
 
   sqlite3 -separator $'\x1f' "$db" "SELECT id, description, responsibility, status, COALESCE(watch_ref, '') FROM ra_milestone WHERE topic_id = '$topic_id' ORDER BY id;"
+  return 0
+}
+
+# list_watchlist_candidates <db-path> [topic-id]
+# Reine Lesefunktion (kein PRAGMA foreign_keys noetig, SELECT-only) fuer den
+# Watchlist-Pass (wiedervorlage-meilensteine#AC2): liefert je pruefbaren
+# externen Meilenstein eine Zeile "topic_id<0x1f>milestone_id<0x1f>watch_ref"
+# -- responsibility='extern' UND status='offen' UND watch_ref gesetzt (BR-015
+# erzwingt das ohnehin als CHECK, hier defensiv nochmal gefiltert, gleiches
+# Muster wie der bestehende ra_milestone-sqlite_master-Defensiv-Check in
+# topic.sh) UND das zugehoerige Thema steht auf status='geparkt' (Zweck-
+# Abschnitt der Spec: der Watchlist-Job beobachtet GEPARKTE Themen, Flow B in
+# architecture.md). Optionaler zweiter Parameter schraenkt auf genau ein
+# Thema ein (gleiches UUID-Format-Gate wie ueberall in dieser Datei,
+# security/R03).
+#
+# Sortierung (topic_id, milestone-id) ist fuer den Aufrufer deterministische
+# Reihenfolge, nicht nur kosmetisch: watchlist_pass.sh#run_watchlist_pass
+# erwirbt/gibt die BR-019/AC6-Serialisierungssperre je ZEILE (also je
+# Meilenstein) -- Zeilen desselben Themas stehen dank dieser Sortierung
+# hintereinander, was reproduzierbare Test-/Log-Ausgaben ergibt (kein
+# funktionales Gruppierungs-Erfordernis: die Sperre wird sicher auch dann
+# korrekt je Zeile erworben/freigegeben, wenn zwei Zeilen desselben Themas
+# nicht direkt aufeinanderfolgen).
+#
+# Leere Ausgabe = kein pruefbarer externer Meilenstein vorhanden (kein
+# Fehlerfall, rc bleibt 0).
+list_watchlist_candidates() {
+  local db="$1"
+  local topic_filter="${2:-}"
+  local where_topic=""
+
+  if [ -n "$topic_filter" ]; then
+    if ! [[ "$topic_filter" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+      echo "FATAL: Themen-ID '$topic_filter' verletzt das UUID-Format -- Abfrage abgelehnt vor jeder SQL-Interpolation (security/R03)." >&2
+      return 1
+    fi
+    where_topic="AND t.id = '$topic_filter'"
+  fi
+
+  sqlite3 -separator $'\x1f' "$db" "
+SELECT t.id, m.id, m.watch_ref
+FROM ra_milestone m
+JOIN ra_topic t ON t.id = m.topic_id
+WHERE m.responsibility = 'extern'
+  AND m.status = 'offen'
+  AND m.watch_ref IS NOT NULL
+  AND t.status = 'geparkt'
+  $where_topic
+ORDER BY t.id, m.id;"
   return 0
 }
 

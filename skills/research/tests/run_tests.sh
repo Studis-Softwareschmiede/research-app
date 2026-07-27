@@ -4,12 +4,14 @@
 # Data-Access-Schicht, Quellen-Resilienz; S-011: Voraussetzungs-Ueberblick --
 # Meilenstein-Liste je Thema + Schutzrechte-Klaerungspunkt; S-008:
 # Bewertungsschicht-Anzeige -- SWOT-Zusammenfassung + Empfehlung +
-# Businessplan-Template).
+# Businessplan-Template; S-013: Watchlist-Pass -- Watchlist-Kopplung +
+# Nebenlaeufigkeits-Serialisierung).
 #
-# Rein mechanisches Shell-Test-Artefakt (M2-Grundgeruest, kein App-Layer im
+# Rein mechanisches Shell-Test-Artefakt (M2/M3-Grundgeruest, kein App-Layer im
 # profile.md-Sinn -- language: md). Erfuellt die Spec-Vertragszeile "Tests
 # taggen @trace research-skill#AC<n>" (docs/specs/research-skill.md
-# "Verträge").
+# "Verträge") bzw. "@trace wiedervorlage-meilensteine#AC<n>"
+# (docs/specs/wiedervorlage-meilensteine.md "Verträge").
 #
 # Covers (research-skill): AC1 (Zwei Modi discovery/thema, last30days-Aufruf
 # ueber --emit=json/--save-dir/--store, last30days_client.sh
@@ -37,11 +39,35 @@
 # Sentinel-Beleg), E3 (gleichzeitiger Lauf auf dasselbe Thema -> Advisory-Lock
 # verweigert/ueberspringt mit Klartext, BR-019, kein Doppel-Lauf).
 #
+# Covers (wiedervorlage-meilensteine): AC2 (Watchlist-Kopplung, S-013:
+# db_scripts/lib/milestone.sh#list_watchlist_candidates -- liefert nur
+# offene EXTERNE Meilensteine mit watch_ref eines GEPARKTEN Themas;
+# watchlist_client.sh#resolve_last30days_watchlist_cmd/check_watchlist_delta
+# -- last30days-Watchlist-Delta-Abfrage per Array-Aufruf, JSON 1:1
+# durchgereicht, kein eigenes Delta-Scoring; watchlist_pass.sh#
+# fetch_watchlist_delta/report_watchlist_result: fetch_watchlist_delta haelt
+# den Themen-Lock nur waehrend des externen Aufrufs (Minimal-Halte-Prinzip,
+# Reviewer-Fund Iteration 1), report_watchlist_result interpretiert danach
+# lock-frei den bereits eingesammelten last30days-eigenen status/new-Wert fuer
+# den Report-Text, OHNE ra_milestone/ra_topic zu mutieren -- die automatische
+# Wiedervorlage (AC3) und die volle AC4-Markierung sind S-014/S-015-Scope),
+# AC6 (Nebenlaeufigkeit, S-013: watchlist_pass.sh#run_watchlist_pass erwirbt/
+# gibt ra_topic_lock (holder='watchlist', BR-019) je Themenwechsel frei; ein
+# bereits durch 'research' gesperrtes Thema wird uebersprungen -- kein
+# Doppel-Lauf, kein Abbruch des Gesamt-Passes), E2 (last30days-Watchlist nicht
+# erreichbar -> jeder betroffene Meilenstein wird als "manuell zu pruefen"
+# gemeldet, kein Absturz des Passes). AC1/AC3/AC4/AC5 dieser Spec sind NICHT
+# Gegenstand dieser Story (AC1 ist S-012/Done, AC3-AC5 sind
+# S-014/S-015-Folgestories).
+#
 # last30days selbst ist in diesem Test-Environment nicht installiert (externe,
 # API-/Netzwerk-abhaengige Installation) -- alle last30days-Aufrufe laufen
 # gegen tests/fixtures/fake-last30days.sh (RA_LAST30DAYS_CMD-Override, exakt
 # der vom Skill selbst vorgesehene Erweiterungspunkt, kein Test-Sonderpfad im
-# Produktivcode).
+# Produktivcode). Die last30days-Watchlist-CLI (separates Skript im
+# last30days-Projekt) laeuft analog gegen
+# tests/fixtures/fake-last30days-watchlist.sh (RA_LAST30DAYS_WATCHLIST_CMD-
+# Override).
 #
 # Aufruf: skills/research/tests/run_tests.sh
 set -euo pipefail
@@ -50,9 +76,12 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESEARCH_DIR="$(dirname "$TEST_DIR")"
 REPO_ROOT="$(cd "$RESEARCH_DIR/../.." && pwd)"
 FAKE_L30D="$TEST_DIR/fixtures/fake-last30days.sh"
+FAKE_L30D_WATCHLIST="$TEST_DIR/fixtures/fake-last30days-watchlist.sh"
 
 # shellcheck source=../scripts/lib/last30days_client.sh
 source "$RESEARCH_DIR/scripts/lib/last30days_client.sh"
+# shellcheck source=../scripts/lib/watchlist_client.sh
+source "$RESEARCH_DIR/scripts/lib/watchlist_client.sh"
 # shellcheck source=../../../db_scripts/lib/apply_migrations.sh
 source "$REPO_ROOT/db_scripts/lib/apply_migrations.sh"
 # shellcheck source=../../../db_scripts/lib/topic.sh
@@ -74,9 +103,14 @@ fail=0
 ok()  { echo "  OK:   $1"; pass=$((pass + 1)); }
 bad() { echo "  FAIL: $1"; fail=$((fail + 1)); }
 
-# orchestrator.sh sourcen (main() feuert wegen des BASH_SOURCE-Guards nicht).
+# orchestrator.sh/watchlist_pass.sh sourcen (main()/watchlist_pass_main()
+# feuern wegen des BASH_SOURCE-Guards jeweils nicht; die beiden Funktionen
+# tragen bewusst unterschiedliche Namen, siehe watchlist_pass.sh-Header --
+# Namenskollision-Fund S-013 Iteration 1).
 # shellcheck source=../scripts/orchestrator.sh
 source "$RESEARCH_DIR/scripts/orchestrator.sh"
+# shellcheck source=../scripts/watchlist_pass.sh
+source "$RESEARCH_DIR/scripts/watchlist_pass.sh"
 
 # new_migrated_db <db-path>
 # Wendet die Migrationen direkt an (wie db_scripts/tests/run_tests.sh) -- BEWUSST
@@ -567,6 +601,286 @@ if [ "$BAD_EVAL_RC" -ne 0 ] && [ -z "$BAD_EVAL_OUT" ]; then
 else
   bad "erwartete Ablehnung, rc=$BAD_EVAL_RC out='$BAD_EVAL_OUT'"
 fi
+
+
+echo "== @trace wiedervorlage-meilensteine#AC2 -- resolve_last30days_watchlist_cmd: nicht installiert bricht klar ab (E2) =="
+ERR_WL1="$TMP/resolve_wl1.err"
+if RA_LAST30DAYS_WATCHLIST_CMD="ra-watchlist-definitiv-nicht-installiert-$$" resolve_last30days_watchlist_cmd > /dev/null 2> "$ERR_WL1"; then
+  bad "resolve_last30days_watchlist_cmd haette fuer ein nicht existentes Kommando fehlschlagen muessen"
+else
+  if grep -q "FATAL.*nicht installiert" "$ERR_WL1" && grep -q "E2" "$ERR_WL1"; then
+    ok "nicht aufloesbares Watchlist-Kommando bricht mit FATAL + Handlungsanweisung ab (E2)"
+  else
+    bad "FATAL-Meldung fehlt/unklar: $(cat "$ERR_WL1")"
+  fi
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC2 -- resolve_last30days_watchlist_cmd: Override aufloesbar =="
+GOT_WL="$(RA_LAST30DAYS_WATCHLIST_CMD="$FAKE_L30D_WATCHLIST" resolve_last30days_watchlist_cmd)"
+if [ "$GOT_WL" = "$FAKE_L30D_WATCHLIST" ]; then
+  ok "RA_LAST30DAYS_WATCHLIST_CMD-Override wird aufgeloest, wenn ausfuehrbar"
+else
+  bad "erwartet '$FAKE_L30D_WATCHLIST', war '$GOT_WL'"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC2 -- resolve_last30days_watchlist_cmd: OHNE Override wird watchlist.py an einem realen last30days-Installationsort gefunden und ueber LAST30DAYS_PYTHON ausgefuehrt (Reviewer-Fund Iteration 1: realistische Default-Aufloesung statt PATH-Fiktion) =="
+FAKE_HOME_AC2="$TMP/fake-home-ac2"
+mkdir -p "$FAKE_HOME_AC2/.claude/skills/last30days/scripts"
+FAKE_WL_SCRIPT="$FAKE_HOME_AC2/.claude/skills/last30days/scripts/watchlist.py"
+printf '#!/usr/bin/env python3\n# Test-Double -- wird im Test nie als echtes Python ausgefuehrt (LAST30DAYS_PYTHON zeigt auf den Fake-Interpreter-Stub).\n' > "$FAKE_WL_SCRIPT"
+
+RESOLVE_AUTO_ERR="$TMP/wl_auto_resolve.err"
+GOT_AUTO_CMD="$(unset RA_LAST30DAYS_WATCHLIST_CMD; HOME="$FAKE_HOME_AC2" LAST30DAYS_PYTHON="$FAKE_L30D_WATCHLIST" resolve_last30days_watchlist_cmd 2>"$RESOLVE_AUTO_ERR")"
+RESOLVE_AUTO_RC=$?
+if [ "$RESOLVE_AUTO_RC" -eq 0 ] && [ -n "$GOT_AUTO_CMD" ] && [ -x "$GOT_AUTO_CMD" ]; then
+  WL_AUTO_ARGS="$TMP/wl_auto.args"
+  FAKE_L30D_WATCHLIST_ARGS_FILE="$WL_AUTO_ARGS" "$GOT_AUTO_CMD" delta "watchlist-item-auto" > /dev/null
+  if grep -qF "$FAKE_WL_SCRIPT" "$WL_AUTO_ARGS" && grep -qx "delta" "$WL_AUTO_ARGS" && grep -qx "watchlist-item-auto" "$WL_AUTO_ARGS"; then
+    ok "ohne RA_LAST30DAYS_WATCHLIST_CMD-Override wird watchlist.py automatisch unter ~/.claude/skills/last30days gefunden und via LAST30DAYS_PYTHON als '<python> <script> delta <watch-ref>' ausgefuehrt"
+  else
+    bad "der aufgeloeste Shim ruft 'LAST30DAYS_PYTHON <script> delta <watch-ref>' nicht korrekt auf: $(cat "$WL_AUTO_ARGS" 2>/dev/null)"
+  fi
+else
+  bad "resolve_last30days_watchlist_cmd (Auto-Discovery) schlug unerwartet fehl: rc=$RESOLVE_AUTO_RC cmd='$GOT_AUTO_CMD' err=$(cat "$RESOLVE_AUTO_ERR")"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC2,E2 -- resolve_last30days_watchlist_cmd: kein Installationsort gefunden -> FATAL (E2), kein Crash =="
+FAKE_HOME_NONE="$TMP/fake-home-none"
+mkdir -p "$FAKE_HOME_NONE"
+ERR_NOTFOUND="$TMP/wl_notfound.err"
+if (unset RA_LAST30DAYS_WATCHLIST_CMD; HOME="$FAKE_HOME_NONE" resolve_last30days_watchlist_cmd) > /dev/null 2> "$ERR_NOTFOUND"; then
+  bad "resolve_last30days_watchlist_cmd haette ohne jede Installation fehlschlagen muessen"
+else
+  if grep -qi "FATAL" "$ERR_NOTFOUND" && grep -q "E2" "$ERR_NOTFOUND"; then
+    ok "kein last30days-Installationsort gefunden -> FATAL mit Handlungsanweisung (E2), kein Crash"
+  else
+    bad "FATAL-Meldung fehlt/unklar: $(cat "$ERR_NOTFOUND")"
+  fi
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC2 -- check_watchlist_delta ruft 'delta <watch-ref>' auf und reicht die last30days-JSON-Antwort unveraendert durch =="
+WL_ARGS_FILE="$TMP/wl_delta.args"
+WL_JSON_OUT="$TMP/wl_delta.stdout"
+FAKE_L30D_WATCHLIST_JSON_FILE="$TEST_DIR/fixtures/watchlist_delta_new.json" FAKE_L30D_WATCHLIST_ARGS_FILE="$WL_ARGS_FILE" \
+  check_watchlist_delta "$FAKE_L30D_WATCHLIST" "watchlist-item-1" > "$WL_JSON_OUT"
+if grep -qx "delta" "$WL_ARGS_FILE" && grep -qx "watchlist-item-1" "$WL_ARGS_FILE"; then
+  ok "check_watchlist_delta ruft 'delta <watch-ref>' auf (Array-Aufruf, AC2)"
+else
+  bad "unerwartete Argumente: $(cat "$WL_ARGS_FILE" 2>/dev/null)"
+fi
+if diff -q "$TEST_DIR/fixtures/watchlist_delta_new.json" "$WL_JSON_OUT" > /dev/null 2>&1; then
+  ok "last30days-Watchlist-JSON-Antwort landet unveraendert auf stdout (kein eigenes Delta-Scoring, Nicht-Ziel)"
+else
+  bad "stdout-JSON weicht von der Fixture ab"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC2,E2 -- check_watchlist_delta: last30days-Watchlist-Fehler-Exitcode wird als FATAL gemeldet =="
+ERR_WL2="$TMP/wl_delta_fail.err"
+if FAKE_L30D_WATCHLIST_EXIT_CODE=2 FAKE_L30D_WATCHLIST_STDERR="simulierter last30days-Watchlist-Fehler" \
+  check_watchlist_delta "$FAKE_L30D_WATCHLIST" "watchlist-item-1" > /dev/null 2> "$ERR_WL2"; then
+  bad "check_watchlist_delta haette bei Exitcode 2 fehlschlagen muessen"
+else
+  if grep -q "FATAL" "$ERR_WL2" && grep -q "E2" "$ERR_WL2" && grep -q "simulierter last30days-Watchlist-Fehler" "$ERR_WL2"; then
+    ok "last30days-Watchlist-Fehler-Exitcode fuehrt zu FATAL inkl. last30days-eigener Fehlermeldung (E2)"
+  else
+    bad "FATAL-Meldung unvollstaendig: $(cat "$ERR_WL2")"
+  fi
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC2,E2 -- check_watchlist_delta: last30days-Watchlist meldet Fehler als JSON auf STDOUT (Exit 1, stderr leer) -- Meldung nimmt stdout mit auf (Reviewer-Fund Iteration 1: Diagnose-Verlust) =="
+ERR_WL_STDOUT_ERR="$TMP/wl_delta_stdout_error.err"
+if FAKE_L30D_WATCHLIST_EXIT_CODE=1 FAKE_L30D_WATCHLIST_JSON_FILE="$TEST_DIR/fixtures/watchlist_delta_error.json" \
+  check_watchlist_delta "$FAKE_L30D_WATCHLIST" "watchlist-item-missing" > /dev/null 2> "$ERR_WL_STDOUT_ERR"; then
+  bad "check_watchlist_delta haette bei Exitcode 1 fehlschlagen muessen"
+else
+  if grep -q "FATAL" "$ERR_WL_STDOUT_ERR" && grep -q "E2" "$ERR_WL_STDOUT_ERR" && grep -q "Topic not found" "$ERR_WL_STDOUT_ERR"; then
+    ok "last30days-Watchlist-Fehler als JSON auf stdout (Exit 1, stderr leer) landet trotzdem in der FATAL-Meldung -- kein Diagnose-Verlust"
+  else
+    bad "FATAL-Meldung verliert die stdout-Fehlermeldung: $(cat "$ERR_WL_STDOUT_ERR")"
+  fi
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC2,E2 -- check_watchlist_delta: ungueltige JSON-Antwort wird als FATAL gemeldet =="
+ERR_WL3="$TMP/wl_delta_badjson.err"
+BAD_JSON_FILE="$TMP/bad.json"
+printf 'kein-json' > "$BAD_JSON_FILE"
+if FAKE_L30D_WATCHLIST_JSON_FILE="$BAD_JSON_FILE" \
+  check_watchlist_delta "$FAKE_L30D_WATCHLIST" "watchlist-item-1" > /dev/null 2> "$ERR_WL3"; then
+  bad "check_watchlist_delta haette bei ungueltigem JSON fehlschlagen muessen"
+else
+  if grep -q "FATAL" "$ERR_WL3" && grep -q "E2" "$ERR_WL3"; then
+    ok "ungueltige last30days-Watchlist-JSON-Antwort fuehrt zu FATAL (E2)"
+  else
+    bad "FATAL-Meldung unklar: $(cat "$ERR_WL3")"
+  fi
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC2 -- list_watchlist_candidates: nur offene EXTERNE Meilensteine mit watch_ref eines GEPARKTEN Themas =="
+DB_AC2="$(new_migrated_db "$TMP/ac2-candidates.sqlite")"
+TOPIC_P="$(create_topic "$DB_AC2" "Geparktes Thema AC2" 2>/dev/null)"
+MS_OPEN="$(create_milestone "$DB_AC2" "$TOPIC_P" "Offener externer Meilenstein" "extern" "watchlist-item-open" 2>/dev/null)"
+create_milestone "$DB_AC2" "$TOPIC_P" "Eigener Meilenstein" "eigen" > /dev/null 2>&1
+MS_DONE="$(create_milestone "$DB_AC2" "$TOPIC_P" "Erfuellter externer Meilenstein" "extern" "watchlist-item-done" 2>/dev/null)"
+set_milestone_status "$DB_AC2" "$MS_DONE" "erfuellt" > /dev/null
+set_topic_status "$DB_AC2" "$TOPIC_P" "geparkt" > /dev/null
+
+TOPIC_A="$(create_topic "$DB_AC2" "Aktives Thema AC2" 2>/dev/null)"
+create_milestone "$DB_AC2" "$TOPIC_A" "Externer Meilenstein auf aktivem Thema" "extern" "watchlist-item-active" > /dev/null 2>&1
+
+CANDIDATES="$(list_watchlist_candidates "$DB_AC2")"
+US=$'\x1f'
+EXPECTED_CAND="$(printf '%s%s%s%swatchlist-item-open' "$TOPIC_P" "$US" "$MS_OPEN" "$US")"
+if [ "$CANDIDATES" = "$EXPECTED_CAND" ]; then
+  ok "list_watchlist_candidates liefert GENAU den offenen externen Meilenstein des geparkten Themas -- eigen/erfuellt/aktives-Thema werden ausgeschlossen (AC2)"
+else
+  bad "erwartet [$EXPECTED_CAND], war [$CANDIDATES]"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC2,security/R03 -- list_watchlist_candidates: ungueltige Themen-ID wird vor SQL-Interpolation abgelehnt =="
+ERR_CAND="$TMP/cand-inject.err"
+set +e
+INJECT_CAND_OUT="$(list_watchlist_candidates "$DB_AC2" "x'; DROP TABLE ra_milestone; --" 2> "$ERR_CAND")"
+INJECT_CAND_RC=$?
+set -e
+STILL_THERE_CAND="$(sqlite3 "$DB_AC2" "SELECT name FROM sqlite_master WHERE type='table' AND name='ra_milestone';")"
+if [ "$INJECT_CAND_RC" -ne 0 ] && [ -z "$INJECT_CAND_OUT" ] && [ "$STILL_THERE_CAND" = "ra_milestone" ] && grep -qi "FATAL" "$ERR_CAND"; then
+  ok "manipulierte Themen-ID wird per Format-Check FATAL abgelehnt, ra_milestone bleibt unangetastet (security/R03)"
+else
+  bad "erwartete Ablehnung, rc=$INJECT_CAND_RC out='$INJECT_CAND_OUT' table='$STILL_THERE_CAND': $(cat "$ERR_CAND")"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC2,E2 -- report_watchlist_result: last30days-Watchlist nicht verfuegbar (leerer cmd) meldet 'manuell zu pruefen', keine DB-Mutation =="
+STATUS_BEFORE="$(sqlite3 "$DB_AC2" "SELECT status FROM ra_milestone WHERE id = $MS_OPEN;")"
+REPORT_NOCMD="$(report_watchlist_result "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "" "127" "/dev/null" "/dev/null")"
+STATUS_AFTER="$(sqlite3 "$DB_AC2" "SELECT status FROM ra_milestone WHERE id = $MS_OPEN;")"
+if echo "$REPORT_NOCMD" | grep -qi "manuell zu pruefen" && echo "$REPORT_NOCMD" | grep -q "E2" && [ "$STATUS_BEFORE" = "$STATUS_AFTER" ]; then
+  ok "ohne aufloesbares last30days-Watchlist-Kommando: Klartext 'manuell zu pruefen' (E2), ra_milestone.status bleibt unveraendert (kein Scope-Uebergriff auf AC3)"
+else
+  bad "unerwartetes Ergebnis: report='$REPORT_NOCMD' status_before=$STATUS_BEFORE status_after=$STATUS_AFTER"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC2 -- fetch_watchlist_delta+report_watchlist_result: last30days meldet Delta (new>0) -> 'Delta erkannt' =="
+FETCH_NEW_LINE="$(FAKE_L30D_WATCHLIST_JSON_FILE="$TEST_DIR/fixtures/watchlist_delta_new.json" \
+  fetch_watchlist_delta "$FAKE_L30D_WATCHLIST" "watchlist-item-open")"
+IFS=$'\x1f' read -r FETCH_NEW_RC FETCH_NEW_JSON FETCH_NEW_ERR <<< "$FETCH_NEW_LINE"
+REPORT_NEW="$(report_watchlist_result "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "$FAKE_L30D_WATCHLIST" "$FETCH_NEW_RC" "$FETCH_NEW_JSON" "$FETCH_NEW_ERR")"
+rm -f "$FETCH_NEW_JSON" "$FETCH_NEW_ERR" 2>/dev/null || true
+if echo "$REPORT_NEW" | grep -qi "Delta erkannt" && echo "$REPORT_NEW" | grep -q "3 neue"; then
+  ok "last30days-Signal 'status=ok,new=3' wird als 'Delta erkannt (3 ...)' reportiert (AC2, last30days-Signal 1:1 durchgereicht)"
+else
+  bad "unerwarteter Report: $REPORT_NEW"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC2 -- fetch_watchlist_delta+report_watchlist_result: last30days meldet kein Delta (new=0) -> 'kein Delta' =="
+FETCH_NONE_LINE="$(FAKE_L30D_WATCHLIST_JSON_FILE="$TEST_DIR/fixtures/watchlist_delta_none.json" \
+  fetch_watchlist_delta "$FAKE_L30D_WATCHLIST" "watchlist-item-open")"
+IFS=$'\x1f' read -r FETCH_NONE_RC FETCH_NONE_JSON FETCH_NONE_ERR <<< "$FETCH_NONE_LINE"
+REPORT_NONE="$(report_watchlist_result "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "$FAKE_L30D_WATCHLIST" "$FETCH_NONE_RC" "$FETCH_NONE_JSON" "$FETCH_NONE_ERR")"
+rm -f "$FETCH_NONE_JSON" "$FETCH_NONE_ERR" 2>/dev/null || true
+if echo "$REPORT_NONE" | grep -qi "kein Delta"; then
+  ok "last30days-Signal 'status=ok,new=0' wird als 'kein Delta' reportiert (AC2)"
+else
+  bad "unerwarteter Report: $REPORT_NONE"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC2 -- fetch_watchlist_delta+report_watchlist_result: last30days meldet 'insufficient_history' -> keine Vergleichs-Historie =="
+FETCH_HIST_LINE="$(FAKE_L30D_WATCHLIST_JSON_FILE="$TEST_DIR/fixtures/watchlist_delta_insufficient_history.json" \
+  fetch_watchlist_delta "$FAKE_L30D_WATCHLIST" "watchlist-item-open")"
+IFS=$'\x1f' read -r FETCH_HIST_RC FETCH_HIST_JSON FETCH_HIST_ERR <<< "$FETCH_HIST_LINE"
+REPORT_HIST="$(report_watchlist_result "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "$FAKE_L30D_WATCHLIST" "$FETCH_HIST_RC" "$FETCH_HIST_JSON" "$FETCH_HIST_ERR")"
+rm -f "$FETCH_HIST_JSON" "$FETCH_HIST_ERR" 2>/dev/null || true
+if echo "$REPORT_HIST" | grep -qi "keine Vergleichs-Historie"; then
+  ok "last30days-Signal 'status=insufficient_history' wird als 'keine Vergleichs-Historie' reportiert (AC2, kein eigenes Delta-Scoring)"
+else
+  bad "unerwarteter Report: $REPORT_HIST"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC2,E2 -- fetch_watchlist_delta+report_watchlist_result: last30days-Watchlist-Aufruf schlaegt fehl -> 'manuell zu pruefen' (kein Crash) =="
+FETCH_FAIL_LINE="$(FAKE_L30D_WATCHLIST_EXIT_CODE=1 FAKE_L30D_WATCHLIST_STDERR="Netzwerkfehler" \
+  fetch_watchlist_delta "$FAKE_L30D_WATCHLIST" "watchlist-item-open")"
+IFS=$'\x1f' read -r FETCH_FAIL_RC FETCH_FAIL_JSON FETCH_FAIL_ERR <<< "$FETCH_FAIL_LINE"
+REPORT_FAIL="$(report_watchlist_result "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "$FAKE_L30D_WATCHLIST" "$FETCH_FAIL_RC" "$FETCH_FAIL_JSON" "$FETCH_FAIL_ERR")"
+rm -f "$FETCH_FAIL_JSON" "$FETCH_FAIL_ERR" 2>/dev/null || true
+if echo "$REPORT_FAIL" | grep -qi "manuell zu pruefen" && echo "$REPORT_FAIL" | grep -q "E2"; then
+  ok "fehlschlagender last30days-Watchlist-Aufruf wird als 'manuell zu pruefen' reportiert, kein Absturz (E2)"
+else
+  bad "unerwarteter Report: $REPORT_FAIL"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC6 -- run_watchlist_pass: ohne Kandidaten meldet Klartext, kein Fehler =="
+DB_AC6_EMPTY="$(new_migrated_db "$TMP/ac6-empty.sqlite")"
+OUT_AC6_EMPTY="$(RA_LAST30DAYS_WATCHLIST_CMD="$FAKE_L30D_WATCHLIST" run_watchlist_pass "$DB_AC6_EMPTY" 2>/dev/null)"
+if echo "$OUT_AC6_EMPTY" | grep -qi "Keine offenen externen Meilensteine"; then
+  ok "ohne pruefbare Kandidaten meldet run_watchlist_pass Klartext, kein Fehler"
+else
+  bad "unerwartete Ausgabe: $OUT_AC6_EMPTY"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC6,BR-019 -- run_watchlist_pass: bereits durch 'research' gesperrtes Thema wird uebersprungen, anderes Thema wird geprueft, Sperre danach frei =="
+DB_AC6="$(new_migrated_db "$TMP/ac6-pass.sqlite")"
+
+TOPIC_X="$(create_topic "$DB_AC6" "Thema X (in Bearbeitung)" 2>/dev/null)"
+MS_X="$(create_milestone "$DB_AC6" "$TOPIC_X" "Externer Meilenstein X" "extern" "watchlist-item-x" 2>/dev/null)"
+set_topic_status "$DB_AC6" "$TOPIC_X" "geparkt" > /dev/null
+acquire_topic_lock "$DB_AC6" "$TOPIC_X" "research" 1800 > /dev/null
+
+TOPIC_Y="$(create_topic "$DB_AC6" "Thema Y (frei)" 2>/dev/null)"
+MS_Y="$(create_milestone "$DB_AC6" "$TOPIC_Y" "Externer Meilenstein Y" "extern" "watchlist-item-y" 2>/dev/null)"
+set_topic_status "$DB_AC6" "$TOPIC_Y" "geparkt" > /dev/null
+
+OUT_AC6="$TMP/ac6_pass.out"
+ERR_AC6="$TMP/ac6_pass.err"
+FAKE_L30D_WATCHLIST_JSON_FILE="$TEST_DIR/fixtures/watchlist_delta_new.json" \
+  RA_LAST30DAYS_WATCHLIST_CMD="$FAKE_L30D_WATCHLIST" \
+  run_watchlist_pass "$DB_AC6" > "$OUT_AC6" 2> "$ERR_AC6"
+
+LOCK_X_HOLDER="$(sqlite3 "$DB_AC6" "SELECT holder FROM ra_topic_lock WHERE topic_id = '$TOPIC_X';")"
+LOCK_Y_COUNT="$(sqlite3 "$DB_AC6" "SELECT COUNT(*) FROM ra_topic_lock WHERE topic_id = '$TOPIC_Y';")"
+if grep -qi "UEBERSPRUNGEN.*$TOPIC_X" "$ERR_AC6" \
+  && ! grep -qF "Meilenstein $MS_X (Thema $TOPIC_X" "$OUT_AC6" \
+  && grep -qF "Meilenstein $MS_Y (Thema $TOPIC_Y" "$OUT_AC6" && grep -qi "Delta erkannt" "$OUT_AC6" \
+  && [ "$LOCK_X_HOLDER" = "research" ] && [ "$LOCK_Y_COUNT" = "0" ]; then
+  ok "gesperrtes Thema X wird uebersprungen (Klartext, kein Doppel-Lauf, Sperre bleibt bei 'research' unangetastet); Thema Y wird geprueft, Watchlist-Sperre danach wieder frei (AC6/BR-019)"
+else
+  bad "unerwartetes Ergebnis: lock_x=$LOCK_X_HOLDER lock_y_count=$LOCK_Y_COUNT stdout=$(cat "$OUT_AC6") stderr=$(cat "$ERR_AC6")"
+fi
+release_topic_lock "$DB_AC6" "$TOPIC_X" "research" > /dev/null
+
+echo "== @trace wiedervorlage-meilensteine#AC2,AC6,E2 -- run_watchlist_pass: last30days-Watchlist nicht erreichbar meldet ALLE Kandidaten als 'manuell zu pruefen', Sperre trotzdem korrekt erworben/freigegeben =="
+DB_AC6_E2="$(new_migrated_db "$TMP/ac6-e2.sqlite")"
+TOPIC_Z="$(create_topic "$DB_AC6_E2" "Thema Z (E2)" 2>/dev/null)"
+MS_Z="$(create_milestone "$DB_AC6_E2" "$TOPIC_Z" "Externer Meilenstein Z" "extern" "watchlist-item-z" 2>/dev/null)"
+set_topic_status "$DB_AC6_E2" "$TOPIC_Z" "geparkt" > /dev/null
+
+OUT_AC6_E2="$TMP/ac6_e2.out"
+ERR_AC6_E2="$TMP/ac6_e2.err"
+RA_LAST30DAYS_WATCHLIST_CMD="ra-watchlist-definitiv-nicht-installiert-$$" \
+  run_watchlist_pass "$DB_AC6_E2" > "$OUT_AC6_E2" 2> "$ERR_AC6_E2"
+LOCK_Z_COUNT="$(sqlite3 "$DB_AC6_E2" "SELECT COUNT(*) FROM ra_topic_lock WHERE topic_id = '$TOPIC_Z';")"
+if grep -qi "nicht erreichbar" "$ERR_AC6_E2" \
+  && grep -qF "Meilenstein $MS_Z (Thema $TOPIC_Z" "$OUT_AC6_E2" && grep -qi "manuell zu pruefen" "$OUT_AC6_E2" \
+  && [ "$LOCK_Z_COUNT" = "0" ]; then
+  ok "last30days-Watchlist komplett nicht erreichbar: WARNUNG + jeder Kandidat als 'manuell zu pruefen' (E2), Sperre wird trotzdem erworben+freigegeben (AC6, kein Crash)"
+else
+  bad "unerwartetes Ergebnis: lock_z_count=$LOCK_Z_COUNT stdout=$(cat "$OUT_AC6_E2") stderr=$(cat "$ERR_AC6_E2")"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#NFR -- run_watchlist_pass ist idempotent: zweiter Lauf auf denselben Stand aendert weder Report noch ra_milestone/ra_topic =="
+MS_Y_STATUS_BEFORE="$(sqlite3 -separator '|' "$DB_AC6" "SELECT status FROM ra_milestone WHERE id = $MS_Y;")"
+TOPIC_Y_STATUS_BEFORE="$(sqlite3 "$DB_AC6" "SELECT status FROM ra_topic WHERE id = '$TOPIC_Y';")"
+OUT_AC6_RUN2="$TMP/ac6_pass_run2.out"
+FAKE_L30D_WATCHLIST_JSON_FILE="$TEST_DIR/fixtures/watchlist_delta_new.json" \
+  RA_LAST30DAYS_WATCHLIST_CMD="$FAKE_L30D_WATCHLIST" \
+  run_watchlist_pass "$DB_AC6" "$TOPIC_Y" > "$OUT_AC6_RUN2" 2>/dev/null
+MS_Y_STATUS_AFTER="$(sqlite3 -separator '|' "$DB_AC6" "SELECT status FROM ra_milestone WHERE id = $MS_Y;")"
+TOPIC_Y_STATUS_AFTER="$(sqlite3 "$DB_AC6" "SELECT status FROM ra_topic WHERE id = '$TOPIC_Y';")"
+if grep -qF "Meilenstein $MS_Y (Thema $TOPIC_Y" "$OUT_AC6_RUN2" && grep -qi "Delta erkannt" "$OUT_AC6_RUN2" \
+  && [ "$MS_Y_STATUS_BEFORE" = "$MS_Y_STATUS_AFTER" ] && [ "$TOPIC_Y_STATUS_BEFORE" = "$TOPIC_Y_STATUS_AFTER" ]; then
+  ok "wiederholte Pruefung desselben Stands liefert denselben Report und mutiert weder ra_milestone.status noch ra_topic.status (NFR Idempotenz -- reiner Lese-/Report-Pfad, keine Doppel-Wirkung moeglich)"
+else
+  bad "unerwartetes Ergebnis: ms_before=$MS_Y_STATUS_BEFORE ms_after=$MS_Y_STATUS_AFTER topic_before=$TOPIC_Y_STATUS_BEFORE topic_after=$TOPIC_Y_STATUS_AFTER out=$(cat "$OUT_AC6_RUN2")"
+fi
+
 
 echo
 echo "Ergebnis: $pass OK, $fail FAIL"
