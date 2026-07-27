@@ -2,7 +2,7 @@ id: S-012
 parent: F-004
 title: 'Parken-Gate: Parken nur mit >=1 externem Meilenstein abschliessbar (nicht
   beim Verwerfen)'
-status: In Progress
+status: Done
 priority: P1
 spec: docs/specs/wiedervorlage-meilensteine.md
 implements:
@@ -25,7 +25,7 @@ pr: null
 blocked_reason: null
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-27T12:24:47Z'
-done_at: null
+updated_at: '2026-07-27T12:44:58Z'
+done_at: '2026-07-27T12:44:58Z'
 claimed_by: MacBook-Pro-von-Alexander.local-11481-1785155086-25348
 claimed_at: '2026-07-27T12:24:47Z'
