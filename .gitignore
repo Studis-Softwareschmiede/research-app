@@ -9,3 +9,9 @@
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+
+# Metrik-Ledger (nur /flow schreibt; gitignored per Spec metrics-subsystem §11)
+.claude/metrics/
+
+# Ephemere Run-Artefakte (Feature-Dossiers, Session-Pläne)
+board/runs/
