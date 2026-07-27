@@ -1,20 +1,52 @@
 ---
 name: research
-description: Orchestriert eine Themen-Recherche fuer research-app (Discovery- oder Thema-Modus, last30days-Aufruf, Persistenz ueber die Data-Access-Schicht). M2-Grundgeruest (S-007) -- SWOT/Empfehlung/Voraussetzungs-Ueberblick folgen in spaeteren Stories (S-008ff.).
+description: Orchestriert eine Themen-Recherche fuer research-app (Discovery- oder Thema-Modus, last30days-Aufruf, Persistenz ueber die Data-Access-Schicht, Voraussetzungs-Ueberblick mit Meilenstein-Liste). M2-Grundgeruest (S-007) + Voraussetzungs-Ueberblick (S-011) -- SWOT/Empfehlung folgen in spaeteren Stories (S-008ff.).
 ---
 
 # /research — Skill-Grundgerüst (M2, ADR-006)
 
-> Quelle: `docs/specs/research-skill.md` (AC1, AC6, AC7), `docs/architecture.md`
-> (Komponente "Orchestrator"/"Discovery/Ingest"). Projekt-lokal unter
-> `skills/research/` (ADR-006) — keine wiederverwendbare Fabrik-Capability.
+> Quelle: `docs/specs/research-skill.md` (AC1, AC5, AC6, AC7), `docs/architecture.md`
+> (Komponente "Orchestrator"/"Discovery/Ingest"/"Voraussetzungs-Ueberblick").
+> Projekt-lokal unter `skills/research/` (ADR-006) — keine wiederverwendbare
+> Fabrik-Capability.
 
-## Zweck (Grundgerüst-Umfang dieser Story, S-007)
+## Zweck (Grundgerüst-Umfang S-007 + Voraussetzungs-Überblick S-011)
 
 Startet einen Recherche-Lauf in einem von zwei Modi und legt das dazugehörige
-Thema über die Data-Access-Schicht (`db_scripts/lib/`) an. SWOT-Judge,
-Deep-Research-Pass, Empfehlung und Voraussetzungs-Überblick (AC2–AC5) sind
-**nicht** Teil dieser Story — sie folgen in S-008 ff. auf demselben Grundgerüst.
+Thema über die Data-Access-Schicht (`db_scripts/lib/`) an; im Thema-Modus wird
+zusätzlich der aktuelle Voraussetzungs-Überblick (Meilenstein-Liste + fixer
+Schutzrechte-Klärungspunkt) im Brief ausgewiesen (AC5, S-011). SWOT-Judge,
+Deep-Research-Pass und Empfehlung (AC2–AC4) sind **nicht** Teil dieser Story —
+sie folgen in S-008 ff. auf demselben Grundgerüst.
+
+## Voraussetzungs-Überblick (AC5, S-011)
+
+- **Meilenstein-Liste anlegen/aktualisieren:** Stellt die Recherche fest, dass
+  ein Thema eine extern oder eigen zu erfüllende Voraussetzung hat (z. B.
+  "Pilotkunde bestätigt", "API-Zugang verfügbar"), legt Claude während der
+  Recherche je Voraussetzung einen Meilenstein über
+  `db_scripts/lib/milestone.sh#create_milestone <db> <topic-id> <description>
+  <extern|eigen> [watch-ref]` an — **niemals** per direktem SQLite-Zugriff
+  (Boundary-Regel). `extern` erfordert eine last30days-Watchlist-Referenz
+  (`watch_ref`, BR-015); `eigen` verbietet sie. Ändert sich der Stand eines
+  bereits bekannten Meilensteins (erfüllt/hinfällig), aktualisiert
+  `set_milestone_status <db> <milestone-id> <offen|erfuellt|hinfaellig>` ihn —
+  **kein** neuer Meilenstein für dieselbe Voraussetzung.
+- **Schutzrechte NUR als Klärungspunkt (C-004, kein Rechtsmodul):** Stellt
+  Claude während der Recherche eine schutzrechtliche Fragestellung fest (Patent/
+  Marke/Urheberrecht), wird das **nie** als eigener Meilenstein oder eigenes
+  Datenfeld persistiert und **nie** rechtlich bewertet — der Brief weist den
+  fixen Klärungspunkt "Klärungspunkt Schutzrechte: zu prüfen, kein
+  automatisiertes Rechtsmodul (C-004)" ohnehin bei jedem Thema-Lauf aus
+  (`orchestrator.sh#print_milestone_overview`); ein konkreter Verdacht gehört
+  als Freitext-Hinweis in den Brief, nicht in die Datenschicht.
+- **Anzeige:** `research_thema` rendert die aktuell in `ra_milestone`
+  hinterlegte Liste (Status + Zuständigkeit, plus Watchlist-Referenz bei
+  `extern`) automatisch im Brief — auch wenn noch kein Meilenstein existiert
+  (dann "Noch keine Meilensteine für dieses Thema hinterlegt.").
+- **Discovery-Modus** zeigt bewusst **keinen** Voraussetzungs-Überblick (reine
+  Topthemen-Sichtung, kein Tiefen-Pass je Kandidat — analog zum bisherigen
+  Scope-Schnitt von SWOT/Empfehlung).
 
 ## Modi (AC1)
 

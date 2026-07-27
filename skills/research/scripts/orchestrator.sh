@@ -1,19 +1,27 @@
 #!/usr/bin/env bash
 # orchestrator.sh — /research-Skill-Einstieg: Modus-Wahl (discovery|thema),
 # Themen-Anlage ueber die Data-Access-Schicht, last30days-Aufruf,
-# Quellen-Resilienz-Brief (research-skill#AC1,AC6,AC7, S-007-Grundgeruest).
+# Quellen-Resilienz-Brief (research-skill#AC1,AC6,AC7, S-007-Grundgeruest),
+# Voraussetzungs-Ueberblick: Meilenstein-Liste + Schutzrechte-Klaerungspunkt
+# (research-skill#AC5, S-011).
 #
-# Quelle: docs/specs/research-skill.md AC1/AC6/AC7 + Edge-Cases E1/E3.
+# Quelle: docs/specs/research-skill.md AC1/AC5/AC6/AC7 + Edge-Cases E1/E3.
 # docs/architecture.md "Orchestrator"-Komponente (Einstieg; waehlt Modus, ruft
-# Paesse in Reihenfolge). SWOT-Judge/Deep-Research/Empfehlung/Voraussetzungs-
-# Ueberblick (AC2-AC5) sind NICHT Teil dieser Story (S-008 ff. bauen auf diesem
-# Grundgeruest auf).
+# Paesse in Reihenfolge) + "Voraussetzungs-Ueberblick"-Komponente
+# ("Klaerungspunkte inkl. Schutzrechte, kein Rechtsmodul"). SWOT-Judge/
+# Deep-Research/Empfehlung (AC2-AC4) sind weiterhin NICHT Teil dieser Datei --
+# sie folgen erst mit S-008/S-009/S-010 auf demselben Grundgeruest. Die
+# Meilenstein-CRUD (create_milestone/set_milestone_status) selbst wird vom
+# Skill-Ausfuehrenden (Claude, SKILL.md) waehrend der eigentlichen Recherche
+# aufgerufen -- dieses Skript liefert nur die deterministische Anzeige des
+# aktuellen Standes im Brief (analog print_missing_sources_note fuer AC7).
 #
 # Boundary-Konformitaet (architecture.md, Review-Blocker): dieses Skript
-# beruehrt SQLite NIE direkt -- jede Themen-Anlage/-Abfrage laeuft ausschliesslich
-# ueber db_scripts/lib/topic.sh (create_topic/find_topic_by_title) und die
-# Sperre ueber db_scripts/lib/topic_lock.sh (acquire_topic_lock/
-# release_topic_lock). last30days wird ausschliesslich ueber
+# beruehrt SQLite NIE direkt -- jede Themen-/Meilenstein-Anlage/-Abfrage laeuft
+# ausschliesslich ueber db_scripts/lib/topic.sh (create_topic/find_topic_by_title)
+# und db_scripts/lib/milestone.sh (create_milestone/list_milestones/
+# set_milestone_status) sowie die Sperre ueber db_scripts/lib/topic_lock.sh
+# (acquire_topic_lock/release_topic_lock). last30days wird ausschliesslich ueber
 # lib/last30days_client.sh aufgerufen (Discovery/Ingest-Pass).
 set -euo pipefail
 
@@ -25,6 +33,8 @@ source "$SCRIPT_DIR/lib/last30days_client.sh"
 source "$REPO_ROOT/db_scripts/lib/topic.sh"
 # shellcheck source=../../../db_scripts/lib/topic_lock.sh
 source "$REPO_ROOT/db_scripts/lib/topic_lock.sh"
+# shellcheck source=../../../db_scripts/lib/milestone.sh
+source "$REPO_ROOT/db_scripts/lib/milestone.sh"
 
 RA_DB_PATH="${RA_DB_PATH:-research-app.sqlite}"
 RA_SAVE_DIR="${RA_SAVE_DIR:-last30days-runs}"
@@ -104,6 +114,49 @@ print_missing_sources_note() {
   return 0
 }
 
+# print_milestone_overview <db-path> <topic-id>
+# AC5 ("Voraussetzungs-Ueberblick"): rendert die aktuelle Meilenstein-Liste des
+# Themas (Status + Zustaendigkeit extern/eigen, ueber db_scripts/lib/milestone.sh
+# #list_milestones -- kein direkter SQLite-Zugriff) und haengt IMMER den fixen
+# Schutzrechte-Klaerungspunkt an (C-004, docs/concept.md: "Schutzrechte erscheinen
+# nur als Klaerungspunkt im Voraussetzungs-Ueberblick" -- kein Rechtsmodul, keine
+# eigene Pruef-/Bewertungslogik dafuer). Die eigentliche Anlage/Aktualisierung der
+# Meilensteine (create_milestone/set_milestone_status) erfolgt waehrend der
+# Recherche selbst (SKILL.md) -- diese Funktion zeigt nur den zum Aufrufzeitpunkt
+# bereits persistierten Stand.
+#
+# Parsing (DBA-Review Iteration 2, Important-Fund): list_milestones trennt seine
+# Felder mit dem ASCII Unit Separator (0x1F, `$'\x1f'`), NICHT mit `|` -- die
+# unrestringierte `description`-Spalte (CHECK erlaubt jeden Nicht-Leer-Text, kann
+# also `|` enthalten) sitzt mitten in der Zeile; ein `|`-IFS wuerde bei einem `|` in
+# der Beschreibung alle Folgefelder verschieben und Status/Zustaendigkeit im Brief
+# lautlos falsch anzeigen. `IFS=$'\x1f'` MUSS mit dem Trennzeichen aus
+# list_milestones uebereinstimmen (milestone.sh-Datei-Header).
+print_milestone_overview() {
+  local db="$1"
+  local topic_id="$2"
+  local rows id description responsibility status watch_ref
+
+  echo "-- Voraussetzungs-Ueberblick --"
+  rows="$(list_milestones "$db" "$topic_id")" || return 1
+
+  if [ -z "$rows" ]; then
+    echo "Noch keine Meilensteine fuer dieses Thema hinterlegt."
+  else
+    while IFS=$'\x1f' read -r id description responsibility status watch_ref; do
+      [ -z "$id" ] && continue
+      if [ -n "$watch_ref" ]; then
+        echo "  - [$status] $description (Zustaendigkeit: $responsibility, Watchlist-Ref: $watch_ref)"
+      else
+        echo "  - [$status] $description (Zustaendigkeit: $responsibility)"
+      fi
+    done <<< "$rows"
+  fi
+
+  echo "Klaerungspunkt Schutzrechte: zu pruefen, kein automatisiertes Rechtsmodul (C-004)."
+  return 0
+}
+
 # research_thema <db-path> <topic-title> <save-dir-base>
 # Thema-Modus (AC1): last30days ueber lib/last30days_client.sh aufrufen,
 # Thema ueber die Data-Access-Schicht anlegen/wiederverwenden (AC6),
@@ -145,6 +198,7 @@ research_thema() {
   echo "Modus: thema"
   echo "Thema: $title"
   echo "Themen-ID: $topic_id"
+  print_milestone_overview "$db" "$topic_id"
   print_missing_sources_note "$json_file"
   rm -f "$json_file"
   return 0
