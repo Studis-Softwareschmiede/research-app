@@ -55,6 +55,44 @@ generate_uuidv7() {
     "$variant_hex" "${rand_hex:4:3}" "${rand_hex:7:12}"
 }
 
+# ra_topic_store_ready <db-path>
+# Reine Lesefunktion (rc-basiert, kein stdout-Payload): rc=0 gdw. die DB-Datei
+# existiert UND bereits bis mindestens Migration 002 (ra_topic) angewandt ist.
+# Genutzt vom /research-Skill (S-007, research-skill#AC1 Edge-Case E1 -- "Store
+# fehlt") als alleinige Store-Bereitschaftspruefung VOR jedem last30days-Aufruf
+# ("kein Halb-Lauf"); haelt die einzige SQLite-Abfrage dieser Art in der
+# Data-Access-Schicht statt eines rohen sqlite3-Aufrufs aus dem Skill-Skript
+# heraus (architecture.md: Data-Access ist die einzige Schreib-/Lesestelle der
+# Bewertungs-Tabellen).
+ra_topic_store_ready() {
+  local db="$1"
+
+  [ -f "$db" ] || return 1
+
+  sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='ra_topic';" \
+    | grep -qx "ra_topic"
+}
+
+# find_topic_by_title <db-path> <title>
+# Reine Lesefunktion (kein PRAGMA foreign_keys noetig, SELECT-only) fuer den
+# EXAKTEN Titel-Abgleich (gleicher Vergleich wie der Duplikat-Check in
+# create_topic, kein Trim/Case-Fuzzing). Gibt eine Zeile je Treffer (Themen-ID)
+# auf stdout aus (leer = kein Treffer). Genutzt vom /research-Skill (S-007,
+# research-skill#AC1/AC6/BR-109): "dasselbe Thema" (exakt gleicher Titel) wird
+# ueber mehrere Laeufe hinweg wiederverwendet (stabile Themen-ID, BR-109) statt
+# bei jedem Aufruf ein neues Thema anzulegen; existieren mehrere Treffer (ein
+# frueherer OF-02-Duplikat-Fall) oder keiner, entscheidet der Aufrufer (S-007:
+# dann Neuanlage per create_topic, OF-02-Warnung greift reguaer). Kein
+# Fehlerfall vorgesehen (rc immer 0, auch bei 0 Treffern).
+find_topic_by_title() {
+  local db="$1"
+  local title="$2"
+  local escaped_title="${title//\'/\'\'}"
+
+  sqlite3 "$db" "SELECT id FROM ra_topic WHERE title = '$escaped_title';"
+  return 0
+}
+
 # create_topic <db-path> <title>
 # Legt ein neues Thema an: generiert die stabile UUIDv7-ID (BR-001), setzt
 # status='aktiv' (Anlage-Kante §7). Leerer Titel wird von der CHECK-Constraint

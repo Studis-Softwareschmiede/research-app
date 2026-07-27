@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "kind": "discovery",
+  "domain": "",
+  "generated_at": "2026-07-27T00:00:00Z",
+  "window_days": 30,
+  "source_status": {
+    "reddit": "no-results",
+    "hackernews": "no-results"
+  },
+  "feeds": [],
+  "results": [],
+  "warnings": [],
+  "outcome": "nothing-solid",
+  "weak_signal": "AI coding agents"
+}

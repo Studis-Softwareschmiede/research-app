@@ -21,7 +21,7 @@ Der projekt-lokale `/research`-Skill (skills/research/, ADR-006) orchestriert ei
 - **AC3 — Zweite Evidenzquelle:** Die SWOT zieht einen Deep-Research-Pass (Claude, Owner-Entscheid a-3) für Fundamentals heran. Fehlt er in einem Lauf, wird die Empfehlung sichtbar als Momentum-Signal markiert (`momentum_only=1`, BR-014) — kein hartes Blocking.
 - **AC4 — Empfehlungs-Kopplung:** Die Empfehlung wird gemäss der in data-model §8 festgelegten Regel aus dem Meilenstein-Status abgeleitet und begründet (BR-013) — nicht allein vom Judge entschieden.
 - **AC5 — Voraussetzungs-Überblick:** Je Thema entsteht/aktualisiert sich die Meilenstein-Liste (Status + Zuständigkeit extern/eigen); Schutzrechte erscheinen höchstens als Klärungspunkt (kein Rechtsmodul, C-004).
-- **AC6 — Persistenz:** Themen-Anlage und Lauf-Ablage laufen ausschliesslich über die Data-Access-Schicht (Themen-Regeln AC1 der Datenmodell-Spec; Titel-Duplikat ⇒ Warnung + Merge-Vorschlag).
+- **AC6 — Persistenz:** Themen-Anlage und Lauf-Ablage laufen ausschliesslich über die Data-Access-Schicht (Themen-Regeln AC1 der Datenmodell-Spec; Titel-Duplikat ⇒ Warnung + Merge-Vorschlag). Präzisierung (S-007): trifft ein Lauf auf ein Thema mit **exakt identischem** Titel wie genau ein bereits bestehendes Thema, wird dessen Themen-ID wiederverwendet statt ein neues Thema anzulegen (BR-109, stabile Identität über mehrere Läufe hinweg); bei keinem oder mehreren Treffern legt die Data-Access-Schicht ein neues Thema an — die Titel-Duplikat-Warnung (OF-02) greift dann unverändert.
 - **AC7 — Quellen-Resilienz:** Fällt eine Quelle aus (Credential abgelaufen, Kontingent erschöpft), läuft der Lauf mit den verbleibenden Quellen durch und weist die fehlenden im Brief aus (PRD Edge).
 
 ## Verträge

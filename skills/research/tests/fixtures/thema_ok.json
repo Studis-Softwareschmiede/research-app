@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.2",
+  "query": "AI coding agents",
+  "generated_at": "2026-07-27T00:00:00Z",
+  "window_days": 30,
+  "source_status": {
+    "reddit": "ok",
+    "x": "auth-failed",
+    "youtube": "no-results",
+    "hackernews": "rate-limited",
+    "grounding": "partial",
+    "perplexity": "skipped-unconfigured"
+  },
+  "freshness_verdicts": [],
+  "clusters": [],
+  "results": []
+}

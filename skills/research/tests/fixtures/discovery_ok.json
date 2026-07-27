@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "kind": "discovery",
+  "domain": "",
+  "generated_at": "2026-07-27T00:00:00Z",
+  "window_days": 30,
+  "source_status": {
+    "reddit": "ok",
+    "x": "unreachable"
+  },
+  "feeds": [],
+  "results": [
+    {
+      "rank": 1,
+      "topic": "Topic Alpha",
+      "why_spiking": "example",
+      "momentum": "new-this-week",
+      "velocity_score": 1.0,
+      "sources": ["reddit"],
+      "engagement": {},
+      "command": "last30days \"Topic Alpha\"",
+      "evidence_urls": [],
+      "top_comment": null,
+      "corroboration_count": 2
+    },
+    {
+      "rank": 2,
+      "topic": "Topic Beta",
+      "why_spiking": "example",
+      "momentum": "building",
+      "velocity_score": 0.5,
+      "sources": ["reddit"],
+      "engagement": {},
+      "command": "last30days \"Topic Beta\"",
+      "evidence_urls": [],
+      "top_comment": null,
+      "corroboration_count": 1
+    }
+  ],
+  "warnings": [],
+  "outcome": "ok",
+  "weak_signal": null
+}
