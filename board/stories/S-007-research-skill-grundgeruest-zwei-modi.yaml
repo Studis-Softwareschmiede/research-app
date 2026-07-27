@@ -2,7 +2,7 @@ id: S-007
 parent: F-003
 title: '/research-Skill-Grundgeruest: Discovery-/Thema-Modus, last30days-Aufruf, Persistenz,
   Quellen-Resilienz'
-status: In Progress
+status: Done
 priority: P1
 spec: docs/specs/research-skill.md
 implements:
@@ -28,7 +28,7 @@ pr: null
 blocked_reason: null
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-27T10:42:04Z'
-done_at: null
+updated_at: '2026-07-27T11:15:19Z'
+done_at: '2026-07-27T11:15:19Z'
 claimed_by: MacBook-Pro-von-Alexander.local-64339-1785148923-24253
 claimed_at: '2026-07-27T10:42:04Z'
