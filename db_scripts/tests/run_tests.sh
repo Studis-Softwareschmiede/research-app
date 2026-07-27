@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # run_tests.sh — Self-Test fuer db_scripts (Migrations-Grundgeruest + Fremd-Store-Schutz
 # + ra_topic: Themen-Anlage + Zustandsautomat, S-002 + ra_run: versionierte Laeufe +
-# result_hash, S-003).
+# result_hash, S-003 + ra_milestone: Status/Zustaendigkeit/Watchlist-Ref-Pflicht,
+# S-005).
 #
 # Rein mechanisches SQL/Shell-Test-Artefakt (M1 ist sprach-neutral, kein App-Layer
 # existiert -- profile.md: language: md). Erfuellt die Spec-Vertragszeile
@@ -10,17 +11,17 @@
 #
 # Covers (research-datenmodell): AC1 (Themen-Anlage, BR-001/BR-002, OF-02),
 # AC2 (Versionierte Laeufe: ra_run, BR-007/BR-008/BR-009/BR-013/BR-014, OF-04,
-# §5-Hash-Bildungsregel, security/R03), AC5 (Zustandsautomat, BR-003/BR-004/BR-005/
-# BR-006, OF-10, sqlite/R02-Verbindungs-Idiom, BR-019-busy_timeout-Vorbereitung),
-# AC6 (Migrationen, aus S-001), AC8 (Fremd-Store-Schutz, aus S-001). AC4-Meilenstein-
-# Kanten (BR-004-Gate, OF-10-Kaskade) sind hier nur bis zur Grenze "ra_milestone
-# existiert nicht" getestet -- die volle Kopplung folgt mit S-005. Der volle
-# AC7/BR-019-Nebenlaeufigkeits-Ausbau (Advisory-Lock ra_topic_lock, Zwei-Schreiber-
-# Test) bleibt S-006 -- hier nur die busy_timeout-Absicherung der bestehenden
-# BEGIN IMMEDIATE-Verbindung (DBA-Review Iteration 2, Important-Fund). AC3
-# (ra_divergence) und AC4 (ra_milestone) bleiben S-004/S-005 -- compute_result_hash
-# wird deshalb hier nur mit direkt uebergebenen SWOT-/Meilenstein-Tupeln getestet
-# (kein ra_swot_item/ra_milestone-Tabellenzugriff, siehe run.sh-Datei-Header).
+# §5-Hash-Bildungsregel, security/R03), AC4 (Meilenstein-Entitaet: BR-015
+# Zustaendigkeit extern/eigen + watch_ref-Pflicht bei extern, BR-016 Status-Enum --
+# alles als rohe CHECK-Constraints getestet, kein Data-Access-Wrapper noetig, siehe
+# 004_ra_milestone.sql-Header), AC5 (Zustandsautomat, BR-003/BR-004/BR-005/
+# BR-006, OF-10, sqlite/R02-Verbindungs-Idiom, BR-019-busy_timeout-Vorbereitung --
+# BR-004-Gate/OF-10-Kaskade jetzt gegen die echte ra_milestone-Tabelle aus S-005
+# statt einer Test-lokalen Ersatztabelle), AC6 (Migrationen, aus S-001), AC8
+# (Fremd-Store-Schutz, aus S-001). AC3 (ra_divergence) bleibt S-004 --
+# compute_result_hash wird deshalb hier weiterhin nur mit direkt uebergebenen
+# SWOT-/Meilenstein-Tupeln getestet (kein ra_swot_item-Tabellenzugriff, siehe
+# run.sh-Datei-Header).
 #
 # Aufruf: db_scripts/tests/run_tests.sh
 set -euo pipefail
@@ -380,6 +381,7 @@ check_rejected "verworfen" "verworfen" "verworfen -> verworfen ebenfalls kein ge
 
 echo "== @trace research-datenmodell#AC5,BR-006 -- set_topic_status fuehrt den Wechsel end-to-end aus =="
 TID_C="$(create_topic "$TOPIC_DB" "Drittes Thema")"
+sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, description, responsibility, status) VALUES ('$TID_C', 'Meilenstein fuer Thema C', 'eigen', 'offen');"
 if set_topic_status "$TOPIC_DB" "$TID_C" "geparkt" 2> "$TMP/set-c.err"; then
   ok "set_topic_status fuehrt die erlaubte Kante aktiv -> geparkt aus"
 else
@@ -491,10 +493,9 @@ else
   bad "nicht existierendes Thema haette abgelehnt werden muessen, rc=$UNKNOWN_RC: $(cat "$TMP/unknown.err")"
 fi
 
-echo "== @trace research-datenmodell#AC5,OF-10 -- geparkt -> verworfen setzt offene Meilensteine auf 'hinfaellig' (sobald ra_milestone existiert) =="
-sqlite3 "$TOPIC_DB" "CREATE TABLE ra_milestone (id INTEGER PRIMARY KEY, topic_id TEXT NOT NULL, status TEXT NOT NULL) STRICT;"
+echo "== @trace research-datenmodell#AC5,OF-10 -- geparkt -> verworfen setzt offene Meilensteine auf 'hinfaellig' =="
 TID_E="$(create_topic "$TOPIC_DB" "Fuenftes Thema")"
-sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, status) VALUES ('$TID_E', 'offen'), ('$TID_E', 'erfuellt');"
+sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, description, responsibility, status) VALUES ('$TID_E', 'Offener Meilenstein', 'eigen', 'offen'), ('$TID_E', 'Erfuellter Meilenstein', 'eigen', 'erfuellt');"
 set_topic_status "$TOPIC_DB" "$TID_E" "geparkt" > /dev/null
 set_topic_status "$TOPIC_DB" "$TID_E" "verworfen" > /dev/null
 MS_STATUSES="$(sqlite3 "$TOPIC_DB" "SELECT status FROM ra_milestone WHERE topic_id = '$TID_E' ORDER BY status;")"
@@ -504,7 +505,7 @@ else
   bad "erwartete Meilenstein-Staende 'erfuellt'+'hinfaellig', bekam: $MS_STATUSES"
 fi
 
-echo "== @trace research-datenmodell#AC5,BR-004 -- aktiv -> geparkt Gate greift, sobald ra_milestone existiert; ohne Tabelle: dokumentierter No-op =="
+echo "== @trace research-datenmodell#AC5,BR-004 -- aktiv -> geparkt Gate lehnt ab ohne mindestens 1 Meilenstein =="
 TID_F="$(create_topic "$TOPIC_DB" "Sechstes Thema")"
 set +e
 set_topic_status "$TOPIC_DB" "$TID_F" "geparkt" > /dev/null 2> "$TMP/gate-f.err"
@@ -512,18 +513,75 @@ GATE_F_RC=$?
 set -e
 STATUS_F="$(sqlite3 "$TOPIC_DB" "SELECT status FROM ra_topic WHERE id = '$TID_F';")"
 if [ "$GATE_F_RC" -ne 0 ] && [ "$STATUS_F" = "aktiv" ] && grep -qi "BR-004" "$TMP/gate-f.err"; then
-  ok "aktiv -> geparkt ohne jeden Meilenstein wird abgelehnt, sobald ra_milestone existiert (BR-004)"
+  ok "aktiv -> geparkt ohne jeden Meilenstein wird abgelehnt (BR-004)"
 else
-  bad "aktiv -> geparkt ohne Meilenstein haette abgelehnt werden muessen (ra_milestone existiert bereits in diesem TOPIC_DB), rc=$GATE_F_RC status='$STATUS_F': $(cat "$TMP/gate-f.err")"
+  bad "aktiv -> geparkt ohne Meilenstein haette abgelehnt werden muessen, rc=$GATE_F_RC status='$STATUS_F': $(cat "$TMP/gate-f.err")"
 fi
 
-NO_MS_DB="$TMP/topic-no-milestone.sqlite"
-apply_migrations "$NO_MS_DB" "$DB_SCRIPTS_DIR" > /dev/null
-TID_G="$(create_topic "$NO_MS_DB" "Siebtes Thema")"
-if set_topic_status "$NO_MS_DB" "$TID_G" "geparkt" 2> "$TMP/gate-g.err"; then
-  ok "ohne ra_milestone-Tabelle (vor S-005) degradiert das BR-004-Gate dokumentiert zum No-op -- aktiv -> geparkt geht durch"
+echo "== @trace research-datenmodell#AC4,BR-015 -- responsibility='extern' erfordert watch_ref (CHECK, roh) =="
+EXTERN_NO_REF_ERR="$TMP/extern-no-ref.err"
+if sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, description, responsibility, status) VALUES ('$TID_F', 'Extern ohne Ref', 'extern', 'offen');" 2> "$EXTERN_NO_REF_ERR"; then
+  bad "responsibility='extern' ohne watch_ref wurde NICHT von der CHECK-Constraint abgelehnt (BR-015)"
 else
-  bad "ohne ra_milestone haette der degradierte Pfad durchgehen sollen: $(cat "$TMP/gate-g.err")"
+  if grep -qi "CHECK constraint failed" "$EXTERN_NO_REF_ERR"; then
+    ok "CHECK-Constraint lehnt 'extern' ohne watch_ref ab (BR-015)"
+  else
+    bad "Insert schlug fehl, aber nicht wegen der watch_ref-Pflicht-Invariante: $(cat "$EXTERN_NO_REF_ERR")"
+  fi
+fi
+
+if sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, description, responsibility, status, watch_ref) VALUES ('$TID_F', 'Extern mit Ref', 'extern', 'offen', 'watchlist-item-1');"; then
+  ok "responsibility='extern' MIT watch_ref wird angenommen (BR-015)"
+else
+  bad "responsibility='extern' mit gesetztem watch_ref haette angenommen werden muessen"
+fi
+
+echo "== @trace research-datenmodell#AC4,BR-015 -- responsibility='eigen' verbietet watch_ref (CHECK, roh) =="
+EIGEN_WITH_REF_ERR="$TMP/eigen-with-ref.err"
+if sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, description, responsibility, status, watch_ref) VALUES ('$TID_F', 'Eigen mit Ref', 'eigen', 'offen', 'watchlist-item-2');" 2> "$EIGEN_WITH_REF_ERR"; then
+  bad "responsibility='eigen' MIT watch_ref wurde NICHT von der CHECK-Constraint abgelehnt (BR-015)"
+else
+  if grep -qi "CHECK constraint failed" "$EIGEN_WITH_REF_ERR"; then
+    ok "CHECK-Constraint lehnt 'eigen' mit gesetztem watch_ref ab (BR-015)"
+  else
+    bad "Insert schlug fehl, aber nicht wegen der watch_ref-Verbots-Invariante: $(cat "$EIGEN_WITH_REF_ERR")"
+  fi
+fi
+
+echo "== @trace research-datenmodell#AC4,BR-015 -- responsibility-Enum als CHECK-Constraint (roh) =="
+BAD_RESP_ERR="$TMP/bad-resp.err"
+if sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, description, responsibility, status) VALUES ('$TID_F', 'Unbekannte Zustaendigkeit', 'unbekannt', 'offen');" 2> "$BAD_RESP_ERR"; then
+  bad "ungueltiger responsibility-Wert 'unbekannt' wurde NICHT von der CHECK-Constraint abgelehnt (BR-015)"
+else
+  if grep -qi "CHECK constraint failed" "$BAD_RESP_ERR"; then
+    ok "CHECK-Constraint lehnt einen responsibility-Wert ausserhalb des Enums ab (BR-015)"
+  else
+    bad "Insert schlug fehl, aber nicht wegen der responsibility-CHECK-Constraint: $(cat "$BAD_RESP_ERR")"
+  fi
+fi
+
+echo "== @trace research-datenmodell#AC4,BR-016 -- status-Enum als CHECK-Constraint (roh) =="
+BAD_MS_STATUS_ERR="$TMP/bad-ms-status.err"
+if sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, description, responsibility, status) VALUES ('$TID_F', 'Unbekannter Status', 'eigen', 'unbekannt');" 2> "$BAD_MS_STATUS_ERR"; then
+  bad "ungueltiger status-Wert 'unbekannt' wurde NICHT von der CHECK-Constraint abgelehnt (BR-016)"
+else
+  if grep -qi "CHECK constraint failed" "$BAD_MS_STATUS_ERR"; then
+    ok "CHECK-Constraint lehnt einen status-Wert ausserhalb des Enums ab (BR-016)"
+  else
+    bad "Insert schlug fehl, aber nicht wegen der status-CHECK-Constraint: $(cat "$BAD_MS_STATUS_ERR")"
+  fi
+fi
+
+echo "== @trace research-datenmodell#AC4,sqlite/R06 -- leere Beschreibung wird abgelehnt (CHECK, roh) =="
+EMPTY_DESC_ERR="$TMP/empty-desc.err"
+if sqlite3 "$TOPIC_DB" "INSERT INTO ra_milestone (topic_id, description, responsibility, status) VALUES ('$TID_F', '   ', 'eigen', 'offen');" 2> "$EMPTY_DESC_ERR"; then
+  bad "leere/nur-Whitespace-Beschreibung wurde NICHT von der CHECK-Constraint abgelehnt"
+else
+  if grep -qi "CHECK constraint failed" "$EMPTY_DESC_ERR"; then
+    ok "CHECK-Constraint lehnt eine leere Meilenstein-Beschreibung ab"
+  else
+    bad "Insert schlug fehl, aber nicht wegen der description-CHECK-Constraint: $(cat "$EMPTY_DESC_ERR")"
+  fi
 fi
 
 echo "== @trace research-datenmodell#AC2,BR-007,OF-04 -- monotone Version je (Thema,Art), getrennt gezaehlt =="

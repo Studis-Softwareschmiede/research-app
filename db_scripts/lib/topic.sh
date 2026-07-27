@@ -7,15 +7,16 @@
 # App-Layer, language: md). Wie apply_migrations.sh/attach_l30d_readonly.sh (S-001)
 # sind das reine Bash-Funktionen, die SQL gegen die Ziel-DB fahren.
 #
-# Dokumentierte Design-Entscheidung (S-002, dieses Item): ra_milestone existiert erst
-# ab S-005. Zwei Stellen im Zustandsautomaten haengen an Meilensteinen:
+# Dokumentierte Design-Entscheidung (S-002, urspruenglich): ra_milestone existierte erst
+# ab S-005 (jetzt angelegt, 004_ra_milestone.sql). Zwei Stellen im Zustandsautomaten
+# haengen an Meilensteinen:
 #   - BR-004 (aktiv -> geparkt nur mit >=1 Meilenstein)
 #   - OF-10  (geparkt -> verworfen setzt offene Meilensteine auf 'hinfaellig')
-# Beide degradieren hier bewusst zum No-op, SOLANGE die Tabelle `ra_milestone` nicht
-# existiert (Existenz-Check via sqlite_master vor jedem Zugriff) -- kein Vorgriff auf
-# das S-005-Tabellenschema. Sobald S-005 `ra_milestone` anlegt, greifen beide Regeln
-# automatisch ohne weitere Aenderung an dieser Datei. Die Kanten-Topologie selbst
-# (BR-006, AC5-Fokus dieser Story) ist davon unabhaengig und immer vollstaendig scharf.
+# Beide greifen seit S-005 unveraendert scharf (kein Aenderungsbedarf an dieser Datei
+# -- der Existenz-Check via sqlite_master bleibt als Defensiv-Absicherung bestehen,
+# ist aber gegen jede Migration ab 004_ra_milestone.sql immer wahr). Die
+# Kanten-Topologie selbst (BR-006, AC5-Fokus dieser Story) ist davon unabhaengig und
+# war immer vollstaendig scharf.
 #
 # Verbindungs-Idiom (DBA-Review Iteration 2, sqlite/R02 -- Referenz-Pattern fuer alle
 # kommenden FK-tragenden Data-Access-Dateien, ra_run/ra_swot_item/ra_milestone/...):
