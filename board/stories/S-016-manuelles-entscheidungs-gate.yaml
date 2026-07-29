@@ -2,7 +2,7 @@ id: S-016
 parent: F-005
 title: 'Manuelles Gate: PM-Anstoss nach bewertetem Lauf als explizite CLI-/Chat-Wahl,
   nie automatisch'
-status: In Progress
+status: Blocked
 priority: P1
 spec: docs/specs/gate-pm-anstoss.md
 implements:
@@ -12,7 +12,7 @@ depends:
 labels: null
 size_est: S
 dispo_est: null
-dispo_act: null
+dispo_act: '4'
 dispo_forecast: null
 estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est
   null, confidence low. Heuristik: n_ac=1 (AC1) + n_comp=2 (Gate-Abfrage CLI/Chat
@@ -21,10 +21,12 @@ confidence: low
 tok_est: null
 branch: feat/S-016-manuelles-gate-pm-anstoss-nach-bewertetem-lauf-als-explizite
 pr: null
-blocked_reason: null
+blocked_reason: 'coder-Handoff uneindeutig — kein ''Review-Handoff: REVIEW REQUIRED''-Marker
+  gefunden (Iteration 1)'
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-29T14:44:56Z'
+updated_at: '2026-07-29T14:51:33Z'
 done_at: null
 claimed_by: MacBook-Pro-von-Alexander.local-94352-1785336293-26971
 claimed_at: '2026-07-29T14:44:54Z'
+tok: '93772434'
