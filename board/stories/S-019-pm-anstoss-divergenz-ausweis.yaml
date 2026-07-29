@@ -2,7 +2,7 @@ id: S-019
 parent: F-005
 title: 'Divergenz-Ausweis: bei veraendertem Stand PM-Ergebnisse aktualisieren und
   Divergenz zum Vorlauf ausweisen'
-status: In Progress
+status: Blocked
 priority: P1
 spec: docs/specs/gate-pm-anstoss.md
 implements:
@@ -13,7 +13,7 @@ depends:
 labels: null
 size_est: M
 dispo_est: null
-dispo_act: null
+dispo_act: '4'
 dispo_forecast: null
 estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est
   null, confidence low. Heuristik: n_ac=1 (AC4) + n_comp=3 (Divergenz-Lesen aus ra_divergence,
@@ -22,10 +22,11 @@ confidence: low
 tok_est: null
 branch: feat/S-019-divergenz-ausweis-bei-veraendertem-stand-pm-ergebnisse-aktua
 pr: null
-blocked_reason: null
+blocked_reason: Gate-Text uneindeutig — manuelle Klärung nötig
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-29T22:55:05Z'
+updated_at: '2026-07-29T23:20:08Z'
 done_at: null
 claimed_by: MacBook-Pro-von-Alexander.local-28417-1785365705-14830
 claimed_at: '2026-07-29T22:55:05Z'
+tok: '19496376'
