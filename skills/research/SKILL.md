@@ -1,6 +1,6 @@
 ---
 name: research
-description: Orchestriert eine Themen-Recherche fuer research-app (Discovery- oder Thema-Modus, last30days-Aufruf, Persistenz ueber die Data-Access-Schicht, Voraussetzungs-Ueberblick mit Meilenstein-Liste, strukturierte SWOT-Bewertung + deterministisch abgeleitete Empfehlung + Businessplan-Template). M2-Grundgeruest (S-007) + Voraussetzungs-Ueberblick (S-011) + Bewertungsschicht (S-008) + Empfehlungs-Kopplung (S-010) -- Deep-Research folgt in S-009.
+description: Orchestriert eine Themen-Recherche fuer research-app (Discovery- oder Thema-Modus, last30days-Aufruf, Persistenz ueber die Data-Access-Schicht, Voraussetzungs-Ueberblick mit Meilenstein-Liste, strukturierte SWOT-Bewertung + deterministisch abgeleitete Empfehlung + Businessplan-Template + manuelles Entscheidungs-Gate). M2-Grundgeruest (S-007) + Voraussetzungs-Ueberblick (S-011) + Bewertungsschicht (S-008) + Empfehlungs-Kopplung (S-010) + Entscheidungs-Gate (S-016) -- Deep-Research folgt in S-009.
 ---
 
 # /research — Skill-Grundgerüst (M2, ADR-006)
@@ -65,7 +65,21 @@ Schicht:
    (`orchestrator.sh#print_businessplan_template`) im Freitext aus.
 6. **Brief rendern:** `skills/research/scripts/orchestrator.sh evaluation
    <run-id>` rendert die SWOT-Zusammenfassung + Empfehlung (inkl.
-   Businessplan-Template bei `weiterverfolgen`) als Teil des Recherche-Briefs.
+   Businessplan-Template bei `weiterverfolgen`) sowie das Entscheidungs-Gate
+   als Teil des Recherche-Briefs.
+
+## Entscheidungs-Gate (AC1, `docs/specs/gate-pm-anstoss.md`, S-016)
+
+Ist die Empfehlung des gerade gerenderten Laufs `weiterverfolgen`, hängt
+`orchestrator.sh#print_gate_prompt` an den Brief eine **explizite** Wahl an:
+den Lauf jetzt per PM-Anstoss an den PM-Prozess übergeben, oder
+zurückstellen. Die Wahl ist bis M5 eine reine CLI-/Chat-Abfrage (ADR-005) —
+Claude stellt sie dem Owner im Chat und wartet auf eine explizite Antwort.
+**Ohne diese Entscheidung passiert nichts** (C-004/BR-102, kein
+Automatik-Anstoss) — der eigentliche PM-Anstoss (pm-skills-Aufruf über den
+PM-Handoff-Pass, AC2–AC6) ist **nicht** Teil dieser Story und wird hier noch
+nicht ausgelöst. Bei `parken`/`verwerfen` erscheint das Gate nicht (kein Pfad
+nach `im_pm` aus diesen Empfehlungen, architecture.md Zustandsautomat).
 
 ## Voraussetzungs-Überblick (AC5, S-011)
 

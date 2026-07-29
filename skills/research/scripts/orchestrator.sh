@@ -4,13 +4,17 @@
 # Quellen-Resilienz-Brief (research-skill#AC1,AC6,AC7, S-007-Grundgeruest),
 # Voraussetzungs-Ueberblick: Meilenstein-Liste + Schutzrechte-Klaerungspunkt
 # (research-skill#AC5, S-011), Bewertungsschicht-Anzeige: SWOT-Zusammenfassung +
-# Empfehlung + Businessplan-Template (research-skill#AC2, S-008).
+# Empfehlung + Businessplan-Template (research-skill#AC2, S-008),
+# Entscheidungs-Gate: explizite PM-Anstoss-Wahl NUR bei 'weiterverfolgen',
+# nie automatisch (gate-pm-anstoss#AC1, S-016).
 #
 # Quelle: docs/specs/research-skill.md AC1/AC2/AC4/AC5/AC6/AC7 + Edge-Cases
-# E1/E2/E3. docs/architecture.md "Orchestrator"-Komponente (Einstieg; waehlt
-# Modus, ruft Paesse in Reihenfolge) + "Voraussetzungs-Ueberblick"-Komponente
-# ("Klaerungspunkte inkl. Schutzrechte, kein Rechtsmodul") + "SWOT-Judge"/
-# "Recommendation"/"Businessplan-Emitter"-Komponenten. Deep-Research (AC3)
+# E1/E2/E3. docs/specs/gate-pm-anstoss.md AC1. docs/architecture.md
+# "Orchestrator"-Komponente (Einstieg; waehlt Modus, ruft Paesse in
+# Reihenfolge) + "Voraussetzungs-Ueberblick"-Komponente ("Klaerungspunkte
+# inkl. Schutzrechte, kein Rechtsmodul") + "SWOT-Judge"/"Recommendation"/
+# "Businessplan-Emitter"/"Gate"-Komponenten (BR-102: Uebergang nach
+# 'uebergeben'/'im_pm' nur ueber das Gate). Deep-Research (AC3)
 # ist weiterhin NICHT Teil dieser Datei -- sie folgt mit S-009 (separater
 # Scope). Die eigentliche SWOT-Bewertung (Kategorie+claim_key je Claim,
 # create_swot_item) UND die Lauf-Anlage (create_run mit recommendation/
@@ -332,12 +336,43 @@ print_recommendation() {
   return 0
 }
 
+# print_gate_prompt <db-path> <run-id>
+# gate-pm-anstoss#AC1: rendert das Entscheidungs-Gate als explizite Wahl
+# (CLI/Chat bis M5, ADR-005) -- NUR wenn die fuer <run-id> persistierte
+# Empfehlung 'weiterverfolgen' ist. Architecture.md Zustandsautomat/Flow C:
+# der Uebergang nach 'uebergeben'/'im_pm' laeuft ausschliesslich ueber dieses
+# Gate (BR-102) und ausschliesslich aus 'weiterverfolgen' (kein Gate-Angebot
+# fuer 'parken'/'verwerfen' -- dort fuehrt kein Pfad nach 'im_pm'). Reine
+# Text-Ausgabe der Wahl; loest selbst KEINE Folgeaktion aus -- der
+# tatsaechliche PM-Anstoss (pm-skills-Aufruf ueber PM-Handoff, AC2-AC6) ist
+# NICHT Teil dieser Story (S-016 implementiert nur AC1). Ohne explizite
+# menschliche Bestaetigung passiert nichts (C-004/BR-102, kein
+# Automatik-Anstoss).
+print_gate_prompt() {
+  local db="$1"
+  local run_id="$2"
+  local row recommendation momentum_only
+
+  row="$(get_run "$db" "$run_id")" || return 1
+  IFS='|' read -r recommendation momentum_only <<< "$row"
+
+  if [ "$recommendation" != "weiterverfolgen" ]; then
+    return 0
+  fi
+
+  echo "-- Entscheidungs-Gate (gate-pm-anstoss#AC1, ADR-005) --"
+  echo "Empfehlung 'weiterverfolgen' erreicht: diesen Lauf jetzt per PM-Anstoss an den PM-Prozess uebergeben?"
+  echo "Wahl (CLI/Chat, explizite Bestaetigung noetig -- C-004/BR-102, kein Automatik-Anstoss): PM-Anstoss | Zurueckstellen"
+  return 0
+}
+
 # render_evaluation <db-path> <run-id>
 # Buendelt die Bewertungsschicht-Anzeige (AC2) fuer einen bereits persistierten
 # Lauf: SWOT-Zusammenfassung + Empfehlung (inkl. Businessplan-Template bei
-# 'weiterverfolgen'). Aufgerufen ueber den `evaluation`-Subbefehl (main()),
-# NACHDEM Claude waehrend der Recherche create_swot_item/create_run aufgerufen
-# hat (SKILL.md) -- kein eigener last30days-/Judge-Aufruf hier.
+# 'weiterverfolgen') + Entscheidungs-Gate (gate-pm-anstoss#AC1). Aufgerufen
+# ueber den `evaluation`-Subbefehl (main()), NACHDEM Claude waehrend der
+# Recherche create_swot_item/create_run aufgerufen hat (SKILL.md) -- kein
+# eigener last30days-/Judge-Aufruf hier.
 render_evaluation() {
   local db="$1"
   local run_id="$2"
@@ -350,6 +385,7 @@ render_evaluation() {
   echo "== Bewertungsschicht (research-skill#AC2) =="
   print_swot_summary "$db" "$run_id" || return 1
   print_recommendation "$db" "$run_id" || return 1
+  print_gate_prompt "$db" "$run_id" || return 1
   return 0
 }
 

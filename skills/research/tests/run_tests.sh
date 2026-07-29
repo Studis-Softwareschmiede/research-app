@@ -5,13 +5,15 @@
 # Meilenstein-Liste je Thema + Schutzrechte-Klaerungspunkt; S-008:
 # Bewertungsschicht-Anzeige -- SWOT-Zusammenfassung + Empfehlung +
 # Businessplan-Template; S-013: Watchlist-Pass -- Watchlist-Kopplung +
-# Nebenlaeufigkeits-Serialisierung).
+# Nebenlaeufigkeits-Serialisierung; S-016: Entscheidungs-Gate -- explizite
+# PM-Anstoss-Wahl NUR bei 'weiterverfolgen', nie automatisch).
 #
 # Rein mechanisches Shell-Test-Artefakt (M2/M3-Grundgeruest, kein App-Layer im
 # profile.md-Sinn -- language: md). Erfuellt die Spec-Vertragszeile "Tests
 # taggen @trace research-skill#AC<n>" (docs/specs/research-skill.md
 # "Verträge") bzw. "@trace wiedervorlage-meilensteine#AC<n>"
-# (docs/specs/wiedervorlage-meilensteine.md "Verträge").
+# (docs/specs/wiedervorlage-meilensteine.md "Verträge") bzw. "@trace
+# gate-pm-anstoss#AC<n>" (docs/specs/gate-pm-anstoss.md "Verträge").
 #
 # Covers (research-skill): AC1 (Zwei Modi discovery/thema, last30days-Aufruf
 # ueber --emit=json/--save-dir/--store, last30days_client.sh
@@ -86,6 +88,16 @@
 # nicht erreichbar -> jeder betroffene Meilenstein wird als "manuell zu
 # pruefen" gemeldet, kein Absturz des Passes). AC1 dieser Spec ist NICHT
 # Gegenstand dieser Story (S-012/Done).
+#
+# Covers (gate-pm-anstoss): AC1 (Entscheidungs-Gate ist manuell, S-016:
+# orchestrator.sh#print_gate_prompt -- rendert die explizite PM-Anstoss-Wahl
+# NUR wenn die fuer den Lauf persistierte Empfehlung 'weiterverfolgen' ist
+# (architecture.md BR-102: Uebergang nach 'im_pm' nur ueber das Gate, nie aus
+# 'parken'/'verwerfen'); render_evaluation/main('evaluation') bindet das Gate
+# automatisch in den Bewertungsschicht-Brief ein; ohne die vorgelagerte
+# Empfehlung 'weiterverfolgen' erscheint KEIN Gate-Text -- reine Anzeige,
+# loest selbst keinen PM-Anstoss aus (C-004/BR-102, AC2-AC6 nicht Gegenstand
+# dieser Story).
 #
 # last30days selbst ist in diesem Test-Environment nicht installiert (externe,
 # API-/Netzwerk-abhaengige Installation) -- alle last30days-Aufrufe laufen
@@ -676,15 +688,17 @@ else
   bad "erwartete Momentum-Hinweis ohne Businessplan-Template, bekam: $REC_PARK_OUT"
 fi
 
-echo "== @trace research-skill#AC2 -- render_evaluation/main('evaluation'): SWOT + Empfehlung als ein Block =="
+echo "== @trace research-skill#AC2,gate-pm-anstoss#AC1 -- render_evaluation/main('evaluation'): SWOT + Empfehlung + Gate als ein Block =="
 create_swot_item "$DB9" "$RUN9_WV_ID" "opportunity" "kundennachfrage" "last30days" > /dev/null
 EVAL_OUT="$(RA_DB_PATH="$DB9" main evaluation "$RUN9_WV_ID")"
 if echo "$EVAL_OUT" | grep -q "Bewertungsschicht (research-skill#AC2)" \
   && echo "$EVAL_OUT" | grep -q "SWOT (strukturiert, BR-012)" \
   && echo "$EVAL_OUT" | grep -q "kundennachfrage" \
   && echo "$EVAL_OUT" | grep -q "Empfehlung: weiterverfolgen" \
-  && echo "$EVAL_OUT" | grep -q "Businessplan-Template"; then
-  ok "main('evaluation', <run-id>) rendert SWOT-Zusammenfassung + Empfehlung + Businessplan-Template ueber render_evaluation"
+  && echo "$EVAL_OUT" | grep -q "Businessplan-Template" \
+  && echo "$EVAL_OUT" | grep -q "Entscheidungs-Gate (gate-pm-anstoss#AC1, ADR-005)" \
+  && echo "$EVAL_OUT" | grep -q "PM-Anstoss | Zurueckstellen"; then
+  ok "main('evaluation', <run-id>) rendert SWOT-Zusammenfassung + Empfehlung + Businessplan-Template + Entscheidungs-Gate ueber render_evaluation"
 else
   bad "unerwartete evaluation-Ausgabe: $EVAL_OUT"
 fi
@@ -698,6 +712,34 @@ if [ "$BAD_EVAL_RC" -ne 0 ] && [ -z "$BAD_EVAL_OUT" ]; then
   ok "render_evaluation weist eine nicht-numerische run-id ab, bevor irgendeine Data-Access-Funktion sie interpoliert"
 else
   bad "erwartete Ablehnung, rc=$BAD_EVAL_RC out='$BAD_EVAL_OUT'"
+fi
+
+echo "== @trace gate-pm-anstoss#AC1 -- print_gate_prompt: 'weiterverfolgen' rendert die explizite PM-Anstoss-Wahl =="
+GATE_WV_OUT="$(print_gate_prompt "$DB9" "$RUN9_WV_ID")"
+if echo "$GATE_WV_OUT" | grep -q "Entscheidungs-Gate (gate-pm-anstoss#AC1, ADR-005)" \
+  && echo "$GATE_WV_OUT" | grep -q "weiterverfolgen" \
+  && echo "$GATE_WV_OUT" | grep -q "PM-Anstoss | Zurueckstellen" \
+  && echo "$GATE_WV_OUT" | grep -q "kein Automatik-Anstoss"; then
+  ok "print_gate_prompt zeigt bei 'weiterverfolgen' die explizite Gate-Wahl inkl. C-004/BR-102-Hinweis (kein Automatik-Anstoss)"
+else
+  bad "erwartete Gate-Wahl, bekam: $GATE_WV_OUT"
+fi
+
+echo "== @trace gate-pm-anstoss#AC1,BR-102 -- print_gate_prompt: 'parken' zeigt KEIN Gate (kein Pfad nach 'im_pm') =="
+GATE_PARK_OUT="$(print_gate_prompt "$DB9" "$RUN9_PARK_ID")"
+if [ -z "$GATE_PARK_OUT" ]; then
+  ok "print_gate_prompt bleibt bei 'parken' leer -- kein Gate-Angebot ausserhalb 'weiterverfolgen' (architecture.md Zustandsautomat)"
+else
+  bad "erwartete leere Ausgabe fuer 'parken', bekam: $GATE_PARK_OUT"
+fi
+
+echo "== @trace gate-pm-anstoss#AC1 -- render_evaluation/main('evaluation'): 'parken'-Lauf zeigt KEIN Gate im Brief =="
+EVAL_PARK_OUT="$(RA_DB_PATH="$DB9" main evaluation "$RUN9_PARK_ID")"
+if echo "$EVAL_PARK_OUT" | grep -q "Empfehlung: parken" \
+  && ! echo "$EVAL_PARK_OUT" | grep -q "Entscheidungs-Gate"; then
+  ok "main('evaluation', <run-id>) zeigt fuer 'parken' keine Gate-Wahl -- kein Automatik-Anstoss ausserhalb 'weiterverfolgen'"
+else
+  bad "erwartete Brief ohne Gate-Abschnitt fuer 'parken', bekam: $EVAL_PARK_OUT"
 fi
 
 
