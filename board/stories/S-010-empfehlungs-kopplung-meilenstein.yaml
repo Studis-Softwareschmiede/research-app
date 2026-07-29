@@ -2,7 +2,7 @@ id: S-010
 parent: F-003
 title: 'Empfehlungs-Kopplung: Empfehlung aus Meilenstein-Status abgeleitet und begruendet
   (nicht nur Judge)'
-status: Blocked
+status: Done
 priority: P1
 spec: docs/specs/research-skill.md
 implements:
@@ -22,11 +22,11 @@ confidence: low
 tok_est: null
 branch: feat/S-010-empfehlungs-kopplung-empfehlung-aus-meilenstein-status-abgel
 pr: null
-blocked_reason: Gate-Text uneindeutig — manuelle Klärung nötig
+blocked_reason: null
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-29T10:27:37Z'
-done_at: null
-claimed_by: MacBook-Pro-von-Alexander.local-99472-1785320148-32072
-claimed_at: '2026-07-29T10:15:49Z'
+updated_at: '2026-07-29T10:45:00Z'
+done_at: '2026-07-29T10:45:00Z'
+claimed_by: null
+claimed_at: null
 tok: '43574186'
