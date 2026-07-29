@@ -122,7 +122,36 @@
 # 'aktiv', obwohl der PM-Dispatch bereits geschrieben ist; ein Neustart mit
 # identischem result_hash trifft den idempotenten Pfad und schliesst den
 # Statuswechsel jetzt ab, statt ihn zu uebergehen -- kein halb aktualisierter
-# Stand wird als "aktuell" markiert).
+# Stand wird als "aktuell" markiert). AC4 (Divergenz-Ausweis, S-019:
+# pm_dispatch.sh#get_latest_pm_dispatch ermittelt den Vorlauf -- den zuletzt
+# fuer dieses Thema dispatchten ANDEREN Lauf, mit dem soeben dispatchten
+# run_id explizit ausgeschlossen (robust gegen einen Abbruch-Neustart, s.u.);
+# orchestrator.sh#materialize_and_render_divergence materialisiert (idempotent
+# via db_scripts/lib/divergence.sh#get_divergence VOR jedem create_divergence)
+# die Divergenz zwischen Vorlauf und Folgelauf ueber
+# compute_swot_delta(list_swot_items(from), list_swot_items(to)) und rendert
+# sie strukturiert (Empfehlung geaendert/SWOT-Delta/Meilenstein-Status-Delta);
+# Meilenstein-Delta bleibt dabei stets leer (kein Lauf-Zeitpunkt-Snapshot,
+# divergence.sh-Datei-Header-Scope-Grenze S-004). Kein Vorlauf (Erst-Anstoss)
+# -> kein Divergenz-Ausweis. Der Divergenz-Materialisierungs-Schritt laeuft
+# unconditional bzgl. rc (auch im idempotenten rc=2-Zweig), um einen Abbruch
+# GENAU zwischen dispatch_pm_handoff-COMMIT und Divergenz-Materialisierung bei
+# Neustart nachzuholen (AC5-Konsistenz fuer diese neue Schreiboperation).
+# divergence.sh#create_divergence verwirft die vom Aufrufer gelieferten
+# swot-/milestone-Delta-Strings selbst, sobald es is_empty=1 (Hash-Vergleich)
+# feststellt -- einzige Quelle der Wahrheit bleibt der Hash, nicht der Aufrufer
+# (Reviewer-Fund Iteration 2: zwei VERSCHIEDENE Laeufe mit IDENTISCHEM
+# result_hash auf demselben Thema loesten sonst eine CHECK-Constraint-
+# Verletzung in ra_divergence aus, obwohl Dispatch+Statuswechsel bereits
+# erfolgreich durchliefen). Scheitert die Divergenz-Materialisierung aus einem
+# ANDEREN Grund (z.B. ein raum-/zeitgleicher zweiter Anstoss auf dasselbe
+# Vorlauf/Folgelauf-Paar, der create_divergence's UNIQUE(from_run_id,
+# to_run_id) verletzt), gibt dispatch_pm_anstoss das NICHT mehr als
+# irrefuehrendes rc=1 ("kein Statuswechsel") zurueck, obwohl Dispatch+
+# Statuswechsel an dieser Stelle bereits real committet sind -- stattdessen
+# eine Warnung auf stderr, die Funktion faehrt mit ihrem eigentlichen rc (0
+# oder 2) fort (Reviewer-Fund S-019 Iteration 3, Header-Vertrag oben in
+# orchestrator.sh#dispatch_pm_anstoss praezisiert).
 #
 # last30days selbst ist in diesem Test-Environment nicht installiert (externe,
 # API-/Netzwerk-abhaengige Installation) -- alle last30days-Aufrufe laufen
@@ -1233,6 +1262,199 @@ if [ "$rc_divergent" = "0" ] && [ "$DISPATCH_COUNT_DIVERGENT" = "2" ] && [ "$TOP
   ok "zweiter Dispatch mit abweichendem Hash auf bereits-im_pm-Thema: rc=0, neuer ra_pm_dispatch-Eintrag, Status bleibt 'im_pm' (kein irrefuehrender rc=1 trotz committetem Write)"
 else
   bad "erwartete rc=0/count=2/status=im_pm, bekam rc=$rc_divergent count=$DISPATCH_COUNT_DIVERGENT status=$TOPIC_STATUS_DIVERGENT out=$(cat "$OUT_AC2_DIVERGENT") err=$(cat "$ERR_AC2_DIVERGENT")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC4 -- orchestrator.sh dispatch_pm_anstoss: veraenderter Ergebnisstand materialisiert die Divergenz zum Vorlauf (ra_divergence) und weist sie strukturiert aus =="
+# Fortsetzung des obigen Tests (derselbe divergente Dispatch RUN_AC2 -> RUN_AC2_DIVERGENT):
+# der PM-Anstoss auf einen veraenderten Ergebnisstand muss ZUSAETZLICH zum
+# Bookkeeping (AC2, oben) die Divergenz zum Vorlauf materialisieren + strukturiert
+# ausweisen (AC4). Keiner der beiden Laeufe traegt SWOT-Items -> leeres Delta
+# erwartet (reale Delta-Inhalte werden im eigenen AC4-Testblock unten geprueft).
+DIVERGENCE_COUNT_AC4="$(sqlite3 "$DB_AC2" "SELECT COUNT(*) FROM ra_divergence WHERE from_run_id = $RUN_AC2 AND to_run_id = $RUN_AC2_DIVERGENT;")"
+DIVERGENCE_ROW_AC4="$(sqlite3 -separator '|' "$DB_AC2" "SELECT is_empty, recommendation_changed, swot_delta, milestone_status_delta FROM ra_divergence WHERE from_run_id = $RUN_AC2 AND to_run_id = $RUN_AC2_DIVERGENT;")"
+if [ "$DIVERGENCE_COUNT_AC4" = "1" ] \
+  && [ "$DIVERGENCE_ROW_AC4" = '0|0|{"added":[],"removed":[],"by_category":{}}|{"changed":[]}' ] \
+  && grep -q "Divergenz-Ausweis (gate-pm-anstoss#AC4, Vorlauf $RUN_AC2 -> Folgelauf $RUN_AC2_DIVERGENT)" "$OUT_AC2_DIVERGENT" \
+  && grep -q "Empfehlung geaendert: nein" "$OUT_AC2_DIVERGENT" \
+  && grep -q "SWOT-Delta:" "$OUT_AC2_DIVERGENT" \
+  && grep -q "Meilenstein-Status-Delta:" "$OUT_AC2_DIVERGENT"; then
+  ok "veraenderter Ergebnisstand (abweichender Hash) materialisiert genau EINE ra_divergence-Zeile (Vorlauf=$RUN_AC2 -> Folgelauf=$RUN_AC2_DIVERGENT) und rendert sie strukturiert im Dispatch-Output (AC4)"
+else
+  bad "erwartete genau 1 Divergenz-Zeile mit is_empty=0/recommendation_changed=0/leerem Delta + strukturierter Ausgabe, bekam count=$DIVERGENCE_COUNT_AC4 row='$DIVERGENCE_ROW_AC4' out=$(cat "$OUT_AC2_DIVERGENT")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC4 -- orchestrator.sh dispatch_pm_anstoss: Erst-Anstoss (kein Vorlauf) materialisiert KEINE Divergenz =="
+# Ganz frisches Thema/Lauf, noch nie per PM-Anstoss dispatcht (kein Vorlauf) --
+# der Erst-Anstoss selbst (gate-pm-anstoss#AC2) darf keine ra_divergence-Zeile
+# erzeugen, da es nichts gibt, wozu er divergieren koennte.
+DB_AC4_FIRST="$(new_migrated_db "$TMP/ac4-first.sqlite")"
+TOPIC_AC4_FIRST="$(create_topic "$DB_AC4_FIRST" "Thema fuer AC4 Erst-Anstoss" 2>/dev/null)"
+RUN_AC4_FIRST_FULL="$(create_run "$DB_AC4_FIRST" "$TOPIC_AC4_FIRST" "recherche" "aa11111111111111111111111111111111111111111111111111111111111111" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC4_FIRST="${RUN_AC4_FIRST_FULL%%|*}"
+OUT_AC4_FIRST="$TMP/ac4_first.out"
+RA_DB_PATH="$DB_AC4_FIRST" \
+  bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC4_FIRST" "$RUN_AC4_FIRST" "Research/PM_Artifacts_first" > "$OUT_AC4_FIRST" 2>/dev/null
+DIVERGENCE_COUNT_FIRST="$(sqlite3 "$DB_AC4_FIRST" "SELECT COUNT(*) FROM ra_divergence;")"
+if [ "$DIVERGENCE_COUNT_FIRST" = "0" ] && ! grep -q "Divergenz-Ausweis" "$OUT_AC4_FIRST"; then
+  ok "Erst-Anstoss ohne Vorlauf erzeugt keine ra_divergence-Zeile und keinen Divergenz-Ausweis-Block (AC4)"
+else
+  bad "erwartete 0 Divergenz-Zeilen ohne Vorlauf, bekam count=$DIVERGENCE_COUNT_FIRST out=$(cat "$OUT_AC4_FIRST")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC4 -- orchestrator.sh dispatch_pm_anstoss: Divergenz-Ausweis spiegelt echte SWOT-Aenderung zwischen Vorlauf und Folgelauf strukturiert wider =="
+# Vorlauf: 'teamkompetenz' (strength) + 'wettbewerbsintensitaet' (threat).
+# Folgelauf: 'teamkompetenz' bleibt, 'wettbewerbsintensitaet' entfaellt, neu:
+# 'regulierung' (threat) -- added=[threat,regulierung], removed=[threat,
+# wettbewerbsintensitaet], by_category.threat={added:1,removed:1}.
+DB_AC4_SWOT="$(new_migrated_db "$TMP/ac4-swot.sqlite")"
+TOPIC_AC4_SWOT="$(create_topic "$DB_AC4_SWOT" "Thema fuer AC4 SWOT-Divergenz" 2>/dev/null)"
+
+RUN_AC4_SWOT_1_FULL="$(create_run "$DB_AC4_SWOT" "$TOPIC_AC4_SWOT" "recherche" "cc33333333333333333333333333333333333333333333333333333333333333" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC4_SWOT_1="${RUN_AC4_SWOT_1_FULL%%|*}"
+create_swot_item "$DB_AC4_SWOT" "$RUN_AC4_SWOT_1" "strength" "teamkompetenz" "last30days" > /dev/null
+create_swot_item "$DB_AC4_SWOT" "$RUN_AC4_SWOT_1" "threat" "wettbewerbsintensitaet" "last30days" > /dev/null
+RA_DB_PATH="$DB_AC4_SWOT" bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC4_SWOT" "$RUN_AC4_SWOT_1" "Research/PM_Artifacts_swot_1" > /dev/null 2>&1
+
+RUN_AC4_SWOT_2_FULL="$(create_run "$DB_AC4_SWOT" "$TOPIC_AC4_SWOT" "recherche" "dd44444444444444444444444444444444444444444444444444444444444444" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC4_SWOT_2="${RUN_AC4_SWOT_2_FULL%%|*}"
+create_swot_item "$DB_AC4_SWOT" "$RUN_AC4_SWOT_2" "strength" "teamkompetenz" "last30days" > /dev/null
+create_swot_item "$DB_AC4_SWOT" "$RUN_AC4_SWOT_2" "threat" "regulierung" "last30days" > /dev/null
+OUT_AC4_SWOT_2="$TMP/ac4_swot_2.out"
+RA_DB_PATH="$DB_AC4_SWOT" \
+  bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC4_SWOT" "$RUN_AC4_SWOT_2" "Research/PM_Artifacts_swot_2" > "$OUT_AC4_SWOT_2" 2>/dev/null
+
+EXPECTED_SWOT_DELTA_AC4='{"added":[["threat","regulierung"]],"removed":[["threat","wettbewerbsintensitaet"]],"by_category":{"threat":{"added":1,"removed":1}}}'
+ACTUAL_SWOT_DELTA_AC4="$(sqlite3 "$DB_AC4_SWOT" "SELECT swot_delta FROM ra_divergence WHERE from_run_id = $RUN_AC4_SWOT_1 AND to_run_id = $RUN_AC4_SWOT_2;")"
+if [ "$ACTUAL_SWOT_DELTA_AC4" = "$EXPECTED_SWOT_DELTA_AC4" ] \
+  && grep -qF "$EXPECTED_SWOT_DELTA_AC4" "$OUT_AC4_SWOT_2"; then
+  ok "Divergenz-Ausweis materialisiert + rendert das echte SWOT-Delta (added 'threat/regulierung', removed 'threat/wettbewerbsintensitaet', unveraendertes 'strength/teamkompetenz' bleibt aussen vor) strukturiert (AC4)"
+else
+  bad "erwartetes swot_delta '$EXPECTED_SWOT_DELTA_AC4', bekam '$ACTUAL_SWOT_DELTA_AC4' (Output: $(cat "$OUT_AC4_SWOT_2"))"
+fi
+
+echo "== @trace gate-pm-anstoss#AC3,AC4 -- orchestrator.sh dispatch_pm_anstoss: zwei VERSCHIEDENE Laeufe mit IDENTISCHEM result_hash duerfen keine CHECK-Constraint-Verletzung in ra_divergence ausloesen (Reviewer-Fund S-019 Iteration 2) =="
+# Normaler AC3-Wiederholungsfall UEBER EINEN NEUEN LAUF (nicht dieselbe run_id
+# erneut uebergeben, sondern ein Recherche-Rerun ohne inhaltliche Aenderung):
+# create_run erzwingt KEINE Hash-Eindeutigkeit pro Thema
+# (UNIQUE(topic_id,kind,version) erlaubt beliebig viele Laeufe mit gleichem
+# Hash). dispatch_pm_handoff liefert fuer den zweiten Lauf rc=2 (Idempotenz
+# ueber (topic_id,result_hash)), OHNE einen neuen ra_pm_dispatch-Eintrag
+# anzulegen -- get_latest_pm_dispatch findet daher trotzdem den AELTEREN Lauf
+# (RUN_1) als "Vorlauf", und materialize_and_render_divergence versucht, eine
+# Divergenz mit is_empty=1 (gleicher Hash) UND von compute_swot_delta/
+# compute_milestone_delta gelieferten NICHT-NULL-Delta-Strings anzulegen (beide
+# Funktionen liefern IMMER ein JSON-Objekt, auch ohne SWOT-Items). Der
+# CHECK-Constraint in 005_ra_divergence.sql (is_empty=0 ODER beide Deltas NULL)
+# verlangt, dass create_divergence die vom Aufrufer gelieferten Deltas selbst
+# verwirft, sobald es is_empty=1 feststellt.
+DB_AC4_SAMEHASH="$(new_migrated_db "$TMP/ac4-samehash.sqlite")"
+TOPIC_AC4_SAMEHASH="$(create_topic "$DB_AC4_SAMEHASH" "Thema fuer AC4 gleicher Hash ueber zwei Laeufe" 2>/dev/null)"
+SAMEHASH_AC4="9988888888888888888888888888888888888888888888888888888888888888"
+
+RUN_AC4_SAMEHASH_1_FULL="$(create_run "$DB_AC4_SAMEHASH" "$TOPIC_AC4_SAMEHASH" "recherche" "$SAMEHASH_AC4" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC4_SAMEHASH_1="${RUN_AC4_SAMEHASH_1_FULL%%|*}"
+RA_DB_PATH="$DB_AC4_SAMEHASH" bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC4_SAMEHASH" "$RUN_AC4_SAMEHASH_1" "Research/PM_Artifacts_samehash_1" > /dev/null 2>&1
+
+RUN_AC4_SAMEHASH_2_FULL="$(create_run "$DB_AC4_SAMEHASH" "$TOPIC_AC4_SAMEHASH" "recherche" "$SAMEHASH_AC4" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC4_SAMEHASH_2="${RUN_AC4_SAMEHASH_2_FULL%%|*}"
+OUT_AC4_SAMEHASH_2="$TMP/ac4_samehash_2.out"
+rc_ac4_samehash=0
+RA_DB_PATH="$DB_AC4_SAMEHASH" \
+  bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC4_SAMEHASH" "$RUN_AC4_SAMEHASH_2" "Research/PM_Artifacts_samehash_2" > "$OUT_AC4_SAMEHASH_2" 2>&1 || rc_ac4_samehash=$?
+
+DIVERGENCE_ROW_SAMEHASH="$(sqlite3 -separator '|' "$DB_AC4_SAMEHASH" "SELECT is_empty, swot_delta, milestone_status_delta FROM ra_divergence WHERE from_run_id = $RUN_AC4_SAMEHASH_1 AND to_run_id = $RUN_AC4_SAMEHASH_2;")"
+if [ "$rc_ac4_samehash" = "2" ] && [ "$DIVERGENCE_ROW_SAMEHASH" = "1||" ] \
+  && grep -q "Divergenz-Ausweis" "$OUT_AC4_SAMEHASH_2"; then
+  ok "zwei verschiedene Laeufe mit identischem result_hash: idempotenter Dispatch (rc=2) materialisiert die Divergenz mit is_empty=1 und NULL-Deltas OHNE CHECK-Constraint-Verletzung (AC3/AC4, Reviewer-Fund S-019 Iteration 2)"
+else
+  bad "erwartete rc=2 mit is_empty=1 und NULL-Deltas ('1||'), bekam rc=$rc_ac4_samehash row='$DIVERGENCE_ROW_SAMEHASH' out=$(cat "$OUT_AC4_SAMEHASH_2")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC4 -- orchestrator.sh dispatch_pm_anstoss: scheitert die Divergenz-Materialisierung NACHDEM Dispatch+Statuswechsel bereits committet sind, wird das als Warnung gemeldet statt als rc=1 (Reviewer-Fund S-019 Iteration 3) =="
+# In der Praxis nur ueber zwei ECHT gleichzeitige dispatch_pm_anstoss-Aufrufe
+# auf dasselbe Vorlauf/Folgelauf-Paar erreichbar (TOCTOU zwischen
+# get_divergence und create_divergence, UNIQUE(from_run_id,to_run_id)) --
+# hier deterministisch simuliert, indem materialize_and_render_divergence
+# in-process (orchestrator.sh ist oben bereits gesourced) durch einen
+# fehlschlagenden Stub ersetzt wird, statt eine echte, timing-abhaengige
+# Race-Condition zu erzwingen.
+DB_AC4_DIVFAIL="$(new_migrated_db "$TMP/ac4-divfail.sqlite")"
+TOPIC_AC4_DIVFAIL="$(create_topic "$DB_AC4_DIVFAIL" "Thema fuer AC4 Divergenz-Materialisierungs-Fehlschlag" 2>/dev/null)"
+
+RUN_AC4_DIVFAIL_1_FULL="$(create_run "$DB_AC4_DIVFAIL" "$TOPIC_AC4_DIVFAIL" "recherche" "aa11111111111111111111111111111111111111111111111111111111111111" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC4_DIVFAIL_1="${RUN_AC4_DIVFAIL_1_FULL%%|*}"
+RA_DB_PATH="$DB_AC4_DIVFAIL" bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC4_DIVFAIL" "$RUN_AC4_DIVFAIL_1" "Research/PM_Artifacts_divfail_1" > /dev/null 2>&1
+
+RUN_AC4_DIVFAIL_2_FULL="$(create_run "$DB_AC4_DIVFAIL" "$TOPIC_AC4_DIVFAIL" "recherche" "bb22222222222222222222222222222222222222222222222222222222222222" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC4_DIVFAIL_2="${RUN_AC4_DIVFAIL_2_FULL%%|*}"
+
+materialize_and_render_divergence() {
+  echo "FATAL: simulierter Divergenz-Materialisierungs-Fehlschlag fuer Testzwecke (S-019 Iteration 3)." >&2
+  return 1
+}
+
+OUT_AC4_DIVFAIL_2="$TMP/ac4_divfail_2.out"
+ERR_AC4_DIVFAIL_2="$TMP/ac4_divfail_2.err"
+rc_ac4_divfail=0
+dispatch_pm_anstoss "$DB_AC4_DIVFAIL" "$TOPIC_AC4_DIVFAIL" "$RUN_AC4_DIVFAIL_2" "Research/PM_Artifacts_divfail_2" > "$OUT_AC4_DIVFAIL_2" 2> "$ERR_AC4_DIVFAIL_2" || rc_ac4_divfail=$?
+
+# Echte materialize_and_render_divergence-Definition fuer alle nachfolgenden
+# Tests wiederherstellen (Re-Sourcing loest KEIN main() aus -- BASH_SOURCE-Guard
+# am Skriptende).
+source "$RESEARCH_DIR/scripts/orchestrator.sh"
+
+DISPATCH_COUNT_DIVFAIL="$(sqlite3 "$DB_AC4_DIVFAIL" "SELECT COUNT(*) FROM ra_pm_dispatch WHERE topic_id = '$TOPIC_AC4_DIVFAIL';")"
+STATUS_DIVFAIL="$(sqlite3 "$DB_AC4_DIVFAIL" "SELECT status FROM ra_topic WHERE id = '$TOPIC_AC4_DIVFAIL';")"
+
+if [ "$rc_ac4_divfail" = "0" ] && [ "$DISPATCH_COUNT_DIVFAIL" = "2" ] && [ "$STATUS_DIVFAIL" = "im_pm" ] \
+  && grep -q "WARNUNG" "$ERR_AC4_DIVFAIL_2" \
+  && ! grep -q "kein Statuswechsel\|Statuswechsel wird nicht durchgefuehrt" "$OUT_AC4_DIVFAIL_2" "$ERR_AC4_DIVFAIL_2"; then
+  ok "Divergenz-Materialisierungs-Fehlschlag NACH bereits committetem Dispatch+Statuswechsel wird als Warnung gemeldet, nicht als rc=1 re-exportiert (Reviewer-Fund S-019 Iteration 3)"
+else
+  bad "erwartete rc=0/dispatch_count=2/status=im_pm + WARNUNG in stderr ohne 'kein Statuswechsel'-Text, bekam rc=$rc_ac4_divfail dispatch_count=$DISPATCH_COUNT_DIVFAIL status=$STATUS_DIVFAIL out=$(cat "$OUT_AC4_DIVFAIL_2") err=$(cat "$ERR_AC4_DIVFAIL_2")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC4,AC5 -- orchestrator.sh dispatch_pm_anstoss: Abbruch ZWISCHEN dispatch_pm_handoff-COMMIT und Divergenz-Materialisierung wird bei Neustart nachgeholt =="
+# Abbruch-Simulation: dispatch_pm_handoff() wird HIER direkt (nicht ueber
+# dispatch_pm_anstoss) fuer den ZWEITEN (divergenten) Lauf aufgerufen -- das
+# bildet den Zustand nach, den ein Prozessabbruch GENAU zwischen dem
+# dispatch_pm_handoff-COMMIT und der nachfolgenden Divergenz-Materialisierung
+# hinterlaesst: ra_pm_dispatch traegt den neuen Eintrag bereits, ra_divergence
+# zum Vorlauf existiert aber noch NICHT.
+DB_AC4_ABORT="$(new_migrated_db "$TMP/ac4-abort.sqlite")"
+TOPIC_AC4_ABORT="$(create_topic "$DB_AC4_ABORT" "Thema fuer AC4 Abbruch-Neustart" 2>/dev/null)"
+RUN_AC4_ABORT_1_FULL="$(create_run "$DB_AC4_ABORT" "$TOPIC_AC4_ABORT" "recherche" "ee55555555555555555555555555555555555555555555555555555555555555" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC4_ABORT_1="${RUN_AC4_ABORT_1_FULL%%|*}"
+RA_DB_PATH="$DB_AC4_ABORT" bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC4_ABORT" "$RUN_AC4_ABORT_1" "Research/PM_Artifacts_abort_1" > /dev/null 2>&1
+
+RUN_AC4_ABORT_2_FULL="$(create_run "$DB_AC4_ABORT" "$TOPIC_AC4_ABORT" "recherche" "ff66666666666666666666666666666666666666666666666666666666666666" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC4_ABORT_2="${RUN_AC4_ABORT_2_FULL%%|*}"
+ARTIFACT_REF_AC4_ABORT_2="Research/PM_Artifacts_abort_2"
+RESULT_HASH_AC4_ABORT_2="ff66666666666666666666666666666666666666666666666666666666666666"
+
+# "Abbruch": nur das Bookkeeping (dispatch_pm_handoff), OHNE die Divergenz-
+# Materialisierung, die im echten dispatch_pm_anstoss-Pfad erst danach liefe.
+dispatch_pm_handoff "$DB_AC4_ABORT" "$TOPIC_AC4_ABORT" "$RUN_AC4_ABORT_2" "$RESULT_HASH_AC4_ABORT_2" "$ARTIFACT_REF_AC4_ABORT_2" > /dev/null 2>&1
+DIVERGENCE_COUNT_PRE_ABORT="$(sqlite3 "$DB_AC4_ABORT" "SELECT COUNT(*) FROM ra_divergence WHERE from_run_id = $RUN_AC4_ABORT_1 AND to_run_id = $RUN_AC4_ABORT_2;")"
+if [ "$DIVERGENCE_COUNT_PRE_ABORT" != "0" ]; then
+  bad "Abbruch-Simulation fehlgeschlagen: erwartete 0 Divergenz-Zeilen VOR dem Neustart, bekam $DIVERGENCE_COUNT_PRE_ABORT"
+fi
+
+# Neustart: identischer Aufruf (gleicher Hash, also rc=2 -- der Dispatch selbst
+# ist ja bereits committet) ueber den echten dispatch_pm_anstoss-Pfad -- muss die
+# ausstehende Divergenz-Materialisierung nachholen, OHNE ein zweites
+# ra_pm_dispatch-Artefakt anzulegen.
+OUT_AC4_ABORT_RESTART="$TMP/ac4_abort_restart.out"
+rc_ac4_abort=0
+RA_DB_PATH="$DB_AC4_ABORT" \
+  bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC4_ABORT" "$RUN_AC4_ABORT_2" "$ARTIFACT_REF_AC4_ABORT_2" > "$OUT_AC4_ABORT_RESTART" 2>&1 || rc_ac4_abort=$?
+DIVERGENCE_COUNT_POST_ABORT="$(sqlite3 "$DB_AC4_ABORT" "SELECT COUNT(*) FROM ra_divergence WHERE from_run_id = $RUN_AC4_ABORT_1 AND to_run_id = $RUN_AC4_ABORT_2;")"
+DISPATCH_COUNT_POST_ABORT="$(sqlite3 "$DB_AC4_ABORT" "SELECT COUNT(*) FROM ra_pm_dispatch WHERE topic_id = '$TOPIC_AC4_ABORT';")"
+if [ "$rc_ac4_abort" = "2" ] && [ "$DIVERGENCE_COUNT_POST_ABORT" = "1" ] && [ "$DISPATCH_COUNT_POST_ABORT" = "2" ] \
+  && grep -q "Divergenz-Ausweis" "$OUT_AC4_ABORT_RESTART"; then
+  ok "Neustart nach simuliertem Abbruch zwischen Dispatch-COMMIT und Divergenz-Materialisierung: ausstehende ra_divergence-Zeile wird NACHGEHOLT (genau 1, kein Duplikat), kein zweites ra_pm_dispatch-Artefakt (AC4/AC5, gefahrloser Neustart)"
+else
+  bad "erwartete rc=2/divergence_count=1/dispatch_count=2, bekam rc=$rc_ac4_abort divergence_count=$DIVERGENCE_COUNT_POST_ABORT dispatch_count=$DISPATCH_COUNT_POST_ABORT out=$(cat "$OUT_AC4_ABORT_RESTART")"
 fi
 
 echo "== @trace gate-pm-anstoss#AC2,BR-102 -- orchestrator.sh dispatch_pm_anstoss: Vorbedingung 'recommendation=weiterverfolgen' wird geprueft =="

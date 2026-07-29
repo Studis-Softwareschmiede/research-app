@@ -41,6 +41,9 @@
 # (list_swot_items) sowie die Sperre ueber db_scripts/lib/topic_lock.sh
 # (acquire_topic_lock/release_topic_lock). last30days wird ausschliesslich ueber
 # lib/last30days_client.sh aufgerufen (Discovery/Ingest-Pass).
+# gate-pm-anstoss#AC4 (Divergenz-Ausweis): db_scripts/lib/pm_dispatch.sh
+# (get_latest_pm_dispatch, Vorlauf-Ermittlung) + db_scripts/lib/divergence.sh
+# (compute_swot_delta/compute_milestone_delta/create_divergence/get_divergence).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,6 +62,8 @@ source "$REPO_ROOT/db_scripts/lib/run.sh"
 source "$REPO_ROOT/db_scripts/lib/swot_item.sh"
 # shellcheck source=../../../db_scripts/lib/pm_dispatch.sh
 source "$REPO_ROOT/db_scripts/lib/pm_dispatch.sh"
+# shellcheck source=../../../db_scripts/lib/divergence.sh
+source "$REPO_ROOT/db_scripts/lib/divergence.sh"
 
 RA_DB_PATH="${RA_DB_PATH:-research-app.sqlite}"
 RA_SAVE_DIR="${RA_SAVE_DIR:-last30days-runs}"
@@ -391,6 +396,51 @@ render_evaluation() {
   return 0
 }
 
+# materialize_and_render_divergence <db-path> <from-run-id> <to-run-id>
+# gate-pm-anstoss#AC4: materialisiert (falls noch nicht vorhanden -- gefahrloser
+# Neustart analog AC5, ueber db_scripts/lib/divergence.sh#get_divergence VOR jedem
+# create_divergence-Aufruf) die strukturierte Divergenz zwischen dem Vorlauf
+# (from, der beim vorherigen PM-Anstoss zu diesem Thema dispatchte Lauf) und dem
+# soeben dispatchten Folgelauf (to), und rendert sie strukturiert (AC4 "weist die
+# Divergenz ... strukturiert aus"). Meilenstein-Delta bleibt hier bewusst leer:
+# ra_milestone historisiert keinen Lauf-Zeitpunkt-Snapshot (divergence.sh-Datei-
+# Header, S-004-Scope-Grenze) -- fuer den PM-Anstoss-Divergenz-Ausweis steht nur
+# die je Lauf strukturierte SWOT-Menge (ra_swot_item#run_id) zur Verfuegung.
+# Beruehrt SQLite nie direkt -- ausschliesslich ueber db_scripts/lib/swot_item.sh
+# (list_swot_items) und db_scripts/lib/divergence.sh.
+materialize_and_render_divergence() {
+  local db="$1"
+  local from_run_id="$2"
+  local to_run_id="$3"
+  local existing
+
+  existing="$(get_divergence "$db" "$from_run_id" "$to_run_id")" || return 1
+
+  if [ -z "$existing" ]; then
+    local from_pairs to_pairs swot_delta milestone_delta
+    from_pairs="$(list_swot_items "$db" "$from_run_id")" || return 1
+    to_pairs="$(list_swot_items "$db" "$to_run_id")" || return 1
+    swot_delta="$(compute_swot_delta "$from_pairs" "$to_pairs")" || return 1
+    milestone_delta="$(compute_milestone_delta "" "")" || return 1
+
+    create_divergence "$db" "$from_run_id" "$to_run_id" "$swot_delta" "$milestone_delta" > /dev/null || return 1
+    existing="$(get_divergence "$db" "$from_run_id" "$to_run_id")" || return 1
+  fi
+
+  local is_empty recommendation_changed swot_delta_out milestone_delta_out
+  IFS='|' read -r is_empty recommendation_changed swot_delta_out milestone_delta_out <<< "$existing"
+
+  echo "-- Divergenz-Ausweis (gate-pm-anstoss#AC4, Vorlauf $from_run_id -> Folgelauf $to_run_id) --"
+  if [ "$recommendation_changed" = "1" ]; then
+    echo "Empfehlung geaendert: ja"
+  else
+    echo "Empfehlung geaendert: nein"
+  fi
+  echo "SWOT-Delta: $swot_delta_out"
+  echo "Meilenstein-Status-Delta: $milestone_delta_out"
+  return 0
+}
+
 # dispatch_pm_anstoss <db-path> <topic-id> <run-id> <artifact-ref>
 # gate-pm-anstoss#AC2 (ADR-009): deterministisches Bookkeeping NACH dem
 # agentischen Skill-Dispatch. pm-skills ist kein CLI-Tool und wird von diesem
@@ -408,7 +458,15 @@ render_evaluation() {
 # rc=2: idempotenter Dispatch (gleicher Hash, bereits vorhanden) -- der
 #       Statuswechsel wird TROTZDEM (erneut) sichergestellt (gate-pm-anstoss#AC5:
 #       gefahrloser Neustart nach Abbruch, kein halb aktualisierter Stand)
-# rc=1: Fehler (Vorbedingung, DB-Fehler) -- kein Statuswechsel
+# rc=1: Fehler (Vorbedingung, DB-Fehler) -- kein Statuswechsel. Gilt NUR fuer
+#       Fehlerpfade VOR dem dispatch_pm_handoff-Commit (Vorbedingungen,
+#       Statuswechsel selbst). Die Divergenz-Materialisierung (AC4, siehe
+#       unten im Funktionskoerper) laeuft NACH diesem Commit + Statuswechsel
+#       -- ihr Scheitern wird NICHT als rc=1 re-exportiert (Dispatch +
+#       Statuswechsel sind an dieser Stelle bereits real durchgelaufen,
+#       ein rc=1 hier waere irrefuehrend), sondern nur als Warnung auf
+#       stderr gemeldet; die Funktion gibt weiterhin ihren eigentlichen
+#       rc (0 oder 2) zurueck.
 dispatch_pm_anstoss() {
   local db="$1"
   local topic_id="$2"
@@ -416,6 +474,7 @@ dispatch_pm_anstoss() {
   local artifact_ref="$4"
   local row recommendation momentum_only topic_title
   local result_hash rc
+  local prev_dispatch_row prev_run_id=""
 
   check_store_or_die "$db" || return 1
 
@@ -527,6 +586,43 @@ dispatch_pm_anstoss() {
     return 1
   else
     echo "Thema-Status: 'aktiv' -> 'im_pm' (architecture.md §7, BR-006)"
+  fi
+
+  # Divergenz-Ausweis (gate-pm-anstoss#AC4): Vorlauf ist der zuletzt fuer dieses
+  # Thema dispatchte ANDERE Lauf -- ermittelt ERST JETZT (nach dispatch_pm_handoff),
+  # mit dem soeben dispatchten run_id explizit ausgeschlossen (pm_dispatch.sh#
+  # get_latest_pm_dispatch). Das macht die Ermittlung robust gegen einen Abbruch
+  # GENAU zwischen dispatch_pm_handoff-COMMIT und dieser Stelle (AC5): ein
+  # Neustart mit identischem Hash faellt auf rc=2, faende aber ohne den
+  # Selbst-Ausschluss faelschlich seinen EIGENEN, bereits committeten Dispatch als
+  # "Vorlauf". Kein Vorlauf (Erst-Anstoss ODER dies ist bislang der einzige
+  # Dispatch des Themas) -> kein Divergenz-Ausweis moeglich/noetig, unabhaengig
+  # von rc. Existiert bereits ein Vorlauf, wird IMMER materialisiert/gerendert
+  # (auch bei rc=2 -- deckt den Abbruch-zwischen-Dispatch-und-Divergenz-Fall ab);
+  # materialize_and_render_divergence selbst ist idempotent (get_divergence-Check
+  # VOR jedem create_divergence), ein wiederholter Aufruf legt daher nie ein
+  # zweites Artefakt an.
+  #
+  # Fehlerbehandlung dieses Schritts (Header-Vertrag oben): Dispatch
+  # (dispatch_pm_handoff) UND Statuswechsel sind an dieser Stelle bereits
+  # committet -- ein Fehlschlag hier (z.B. ein raum-/zeitgleicher zweiter
+  # Anstoss auf dasselbe Vorlauf/Folgelauf-Paar, der create_divergence's
+  # UNIQUE(from_run_id,to_run_id) verletzt, oder ein transienter DB-Fehler)
+  # darf NICHT als rc=1 zurueckgegeben werden -- das wuerde faelschlich
+  # "kein Statuswechsel" behaupten, obwohl beides bereits real durchgelaufen
+  # ist. Stattdessen: Warnung auf stderr, die Funktion faehrt mit ihrem
+  # eigentlichen rc (0 oder 2) fort; der Divergenz-Ausweis (AC4) entfaellt
+  # dann fuer diesen Aufruf, ohne den bereits erfolgten State-Change zu
+  # verschleiern.
+  if ! prev_dispatch_row="$(get_latest_pm_dispatch "$db" "$topic_id" "$run_id")"; then
+    echo "WARNUNG: Vorlauf-Ermittlung fuer den Divergenz-Ausweis (AC4) fehlgeschlagen -- Dispatch und Statuswechsel sind bereits abgeschlossen, der Divergenz-Ausweis entfaellt fuer diesen Aufruf." >&2
+    prev_dispatch_row=""
+  fi
+  if [ -n "$prev_dispatch_row" ]; then
+    prev_run_id="${prev_dispatch_row%%|*}"
+    if ! materialize_and_render_divergence "$db" "$prev_run_id" "$run_id"; then
+      echo "WARNUNG: Divergenz-Materialisierung (AC4) fehlgeschlagen -- Dispatch und Statuswechsel sind bereits abgeschlossen, der Divergenz-Ausweis entfaellt fuer diesen Aufruf." >&2
+    fi
   fi
 
   if [ "$rc" -eq 2 ]; then

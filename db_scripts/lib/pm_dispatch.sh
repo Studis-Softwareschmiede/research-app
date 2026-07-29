@@ -3,7 +3,9 @@
 # idempotent).
 #
 # Quelle: docs/specs/gate-pm-anstoss.md AC2 ("PM-Anstoss idempotent mit
-# Divergenz-Ausweis"), AC3 ("Idempotenz via UNIQUE(topic_id, result_hash)");
+# Divergenz-Ausweis"), AC3 ("Idempotenz via UNIQUE(topic_id, result_hash)"),
+# AC4 ("Divergenz-Ausweis bei veraendertem Ergebnisstand" -- get_latest_pm_dispatch
+# liefert den Vorlauf fuer orchestrator.sh#materialize_and_render_divergence);
 # docs/data-model.md §2.6, §4 BR-017 (Idempotenz-Invariante).
 # architecture.md: "Data-Access" ist die einzige Schreib-/Lesestelle der
 # Bewertungs-Tabellen (single-writer) -- diese Datei IST diese Schicht. Analog
@@ -107,6 +109,44 @@ get_pm_dispatch() {
   return 0
 }
 
+# get_latest_pm_dispatch <db-path> <topic-id> [exclude-run-id]
+# Reine Lesefunktion (gate-pm-anstoss#AC4): liefert den zuletzt fuer dieses Thema
+# dispatchten Lauf als "run_id|result_hash" (neuester Eintrag nach dispatched_at,
+# id als Tie-Breaker), oder leere Ausgabe, wenn kein passender PM-Dispatch
+# existiert (rc=0, kein Fehlerfall -- Erst-Anstoss hat keinen Vorlauf).
+#
+# [exclude-run-id] (optional): schliesst Zeilen mit genau diesem run_id aus der
+# Suche aus. Aufrufer (orchestrator.sh#dispatch_pm_anstoss) uebergibt hier den
+# gerade dispatchten Lauf, um den "Vorlauf" (den tatsaechlich VORHERGEHENDEN,
+# ANDEREN Lauf) robust gegen einen Abbruch-Neustart (AC5) zu ermitteln: OHNE
+# Ausschluss wuerde ein bereits VOR dem Abbruch committeter eigener
+# ra_pm_dispatch-Eintrag (derselbe run_id, gleicher Hash -- der Neustart faellt
+# auf den idempotenten rc=2-Pfad) sich selbst als "Vorlauf" zurueckliefern,
+# sobald dieser Aufruf NACH dispatch_pm_handoff erfolgt (notwendig, um auch den
+# Abbruch-zwischen-Dispatch-und-Divergenz-Fall abzudecken).
+get_latest_pm_dispatch() {
+  local db="$1"
+  local topic_id="$2"
+  local exclude_run_id="${3:-}"
+
+  if ! [[ "$topic_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+    echo "FATAL: Themen-ID '$topic_id' verletzt das UUID-Format -- Abfrage abgelehnt (security/R03)." >&2
+    return 1
+  fi
+
+  local exclude_clause=""
+  if [ -n "$exclude_run_id" ]; then
+    if ! [[ "$exclude_run_id" =~ ^[0-9]+$ ]]; then
+      echo "FATAL: exclude-run-id '$exclude_run_id' ist keine gueltige Ganzzahl -- Abfrage abgelehnt vor jeder SQL-Interpolation (security/R03)." >&2
+      return 1
+    fi
+    exclude_clause="AND run_id != $exclude_run_id"
+  fi
+
+  sqlite3 -separator '|' "$db" "SELECT run_id, result_hash FROM ra_pm_dispatch WHERE topic_id = '$topic_id' $exclude_clause ORDER BY dispatched_at DESC, id DESC LIMIT 1;" 2>/dev/null
+  return 0
+}
+
 # Nur ausfuehren, wenn direkt aufgerufen -- nicht beim Sourcen fuer Tests/andere Skripte.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   usage() {
@@ -114,6 +154,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 Usage:
   pm_dispatch.sh dispatch <db-path> <topic-id> <run-id> <result-hash> <artifact-ref>
   pm_dispatch.sh get <db-path> <topic-id> <result-hash>
+  pm_dispatch.sh latest <db-path> <topic-id> [exclude-run-id]
 USAGE
     return 1
   }
@@ -124,6 +165,9 @@ USAGE
       ;;
     get)
       get_pm_dispatch "$2" "$3" "$4"
+      ;;
+    latest)
+      get_latest_pm_dispatch "$2" "$3" "${4:-}"
       ;;
     *)
       usage

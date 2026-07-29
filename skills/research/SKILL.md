@@ -115,6 +115,13 @@ stattdessen so:
    identischem Hash den ausstehenden Statuswechsel nach, statt das Thema
    dauerhaft in `aktiv` hängen zu lassen (AC5, gefahrloser Neustart).
 
+   **AC4 (S-019): Divergenz-Ausweis bei verändertem Ergebnisstand.** Gab es zu
+   diesem Thema bereits einen früheren PM-Anstoss (einen "Vorlauf"), weist der
+   Befehl im Anschluss die strukturierte Divergenz zwischen Vorlauf und diesem
+   Folgelauf aus (Empfehlung geändert?, SWOT-Delta, Meilenstein-Status-Delta) —
+   Claude gibt diesen Block dem Owner als Teil der Rückmeldung weiter. Beim
+   Erst-Anstoss (kein Vorlauf) entfällt der Block ersatzlos.
+
 Ist pm-skills in der aktiven Session nicht verfügbar (Skill/Sub-Agent nicht
 auffindbar), bricht der Skill-Dispatch (Schritt 1) ab, **bevor**
 `orchestrator.sh dispatch_pm_anstoss` überhaupt aufgerufen wird — kein

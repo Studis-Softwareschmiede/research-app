@@ -246,6 +246,17 @@ create_divergence() {
   local recommendation_changed=0
   [ "$from_rec" != "$to_rec" ] && recommendation_changed=1
 
+  # is_empty ist die einzige Quelle der Wahrheit (Hash-Vergleich oben) -- der
+  # CHECK-Constraint in 005_ra_divergence.sql verlangt is_empty=0 ODER beide
+  # Deltas NULL. Verwirft hier aktiv die vom Aufrufer gelieferten Delta-Strings,
+  # statt dem Aufrufer die is_empty-Kenntnis vorab abzuverlangen (S-019-Lesson):
+  # zwei verschiedene Laeufe mit zufaellig identischem result_hash lieferten
+  # sonst nicht-leere Deltas bei is_empty=1 -> CHECK-Constraint-Verletzung.
+  if [ "$is_empty" -eq 1 ]; then
+    swot_delta=""
+    milestone_delta=""
+  fi
+
   local esc_swot_delta esc_milestone_delta
   esc_swot_delta="${swot_delta//\'/\'\'}"
   esc_milestone_delta="${milestone_delta//\'/\'\'}"
@@ -284,5 +295,31 @@ SQL
   fi
 
   echo "$out"
+  return 0
+}
+
+# get_divergence <db-path> <from-run-id> <to-run-id>
+# Reine Lesefunktion (gate-pm-anstoss#AC4/AC5): gibt eine bereits materialisierte
+# Divergenz-Zeile fuer dieses Laufpaar als "is_empty|recommendation_changed|
+# swot_delta|milestone_status_delta" aus, oder leere Ausgabe, wenn noch keine
+# existiert (rc=0, kein Fehlerfall). Ermoeglicht dem Aufrufer
+# (orchestrator.sh#materialize_and_render_divergence), einen bereits angelegten
+# Datensatz wiederzuverwenden statt erneut gegen UNIQUE(from_run_id,to_run_id) zu
+# laufen (gefahrloser Neustart, analog pm_dispatch.sh#dispatch_pm_handoff-Idempotenz).
+get_divergence() {
+  local db="$1"
+  local from_run_id="$2"
+  local to_run_id="$3"
+
+  if ! [[ "$from_run_id" =~ ^[0-9]+$ ]]; then
+    echo "FATAL: from-run-id '$from_run_id' ist keine gueltige Ganzzahl -- Abfrage abgelehnt vor jeder SQL-Interpolation (security/R03)." >&2
+    return 1
+  fi
+  if ! [[ "$to_run_id" =~ ^[0-9]+$ ]]; then
+    echo "FATAL: to-run-id '$to_run_id' ist keine gueltige Ganzzahl -- Abfrage abgelehnt vor jeder SQL-Interpolation (security/R03)." >&2
+    return 1
+  fi
+
+  sqlite3 -separator '|' "$db" "SELECT is_empty, recommendation_changed, swot_delta, milestone_status_delta FROM ra_divergence WHERE from_run_id = $from_run_id AND to_run_id = $to_run_id;" 2>/dev/null
   return 0
 }
