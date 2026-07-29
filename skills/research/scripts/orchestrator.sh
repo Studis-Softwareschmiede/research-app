@@ -405,7 +405,9 @@ render_evaluation() {
 #   - Status-Transition 'aktiv' -> 'im_pm' (BR-006, architecture.md §7)
 #
 # rc=0: neuer Dispatch, Status gesetzt
-# rc=2: idempotenter Dispatch (gleicher Hash, bereits erfolgt) -- Status bleibt 'im_pm'
+# rc=2: idempotenter Dispatch (gleicher Hash, bereits vorhanden) -- der
+#       Statuswechsel wird TROTZDEM (erneut) sichergestellt (gate-pm-anstoss#AC5:
+#       gefahrloser Neustart nach Abbruch, kein halb aktualisierter Stand)
 # rc=1: Fehler (Vorbedingung, DB-Fehler) -- kein Statuswechsel
 dispatch_pm_anstoss() {
   local db="$1"
@@ -489,33 +491,47 @@ dispatch_pm_anstoss() {
     echo "PM-Dispatch protokolliert (neue Eingabe)."
   elif [ "$rc" -eq 2 ]; then
     echo "PM-Anstoss ist idempotent: gleicher Hash zum Thema bereits vorhanden (BR-017, AC3)."
-    # Status bleibt 'im_pm', kein erneuter Wechsel.
-    return 2
   else
     echo "FATAL: PM-Dispatch-Protokollierung fehlgeschlagen -- Statusaenderung wird nicht durchgefuehrt." >&2
     return 1
   fi
 
-  # Status-Wechsel: aktiv -> im_pm (BR-006, architecture.md §7). Ausnahme: war
-  # das Thema schon 'im_pm' (zweiter Dispatch mit abweichendem result_hash,
-  # z.B. ein weiterer Recherche-Lauf waehrend das Thema noch im PM-Prozess
-  # ist), ist der Status bereits korrekt -- 'im_pm' -> 'im_pm' ist KEINE
-  # gueltige Kante in ra_topic_valid_transition, ein unconditional-Aufruf
-  # wuerde hier faelschlich fehlschlagen, obwohl der Dispatch oben bereits
-  # erfolgreich committet wurde (Lesson S-017, 2026-07-30).
+  # Status-Wechsel: aktiv -> im_pm (BR-006, architecture.md §7). Laeuft AUCH
+  # im idempotenten Fall (rc=2) mit -- nicht nur bei einem neuen Dispatch
+  # (rc=0): bricht ein vorheriger Anstoss GENAU zwischen dem
+  # dispatch_pm_handoff-COMMIT und diesem Statuswechsel ab (Kill/Crash/Abbruch
+  # der Session), bleibt das Thema 'aktiv', obwohl der ra_pm_dispatch-Eintrag
+  # bereits geschrieben ist. Ein Neustart mit identischem result_hash trifft
+  # dann den idempotenten Pfad oben (rc=2) -- ohne diesen Fallthrough wuerde
+  # die Funktion dort sofort zurueckkehren, OHNE den ausstehenden
+  # Statuswechsel je nachzuholen, und das Thema bliebe dauerhaft in 'aktiv'
+  # haengen, obwohl die PM-Artefakte laengst existieren (Verstoss gegen AC5:
+  # "kein halb aktualisierter Stand wird als 'aktuell' markiert").
+  #
+  # Ausnahme: war das Thema schon 'im_pm' (regulaerer Fall -- der vorherige
+  # Lauf hat den Statuswechsel bereits erfolgreich abgeschlossen -- ODER ein
+  # zweiter Dispatch mit abweichendem result_hash waehrend das Thema noch im
+  # PM-Prozess ist), ist der Status bereits korrekt -- 'im_pm' -> 'im_pm' ist
+  # KEINE gueltige Kante in ra_topic_valid_transition, ein unconditional-
+  # Aufruf wuerde hier faelschlich fehlschlagen, obwohl der Dispatch oben
+  # bereits erfolgreich committet wurde (Lesson S-017, 2026-07-30).
   if [ "$current_status" = "im_pm" ]; then
     echo "Thema-Status: bleibt 'im_pm' (bereits im PM-Prozess; aktualisierter Dispatch protokolliert)."
   elif ! set_topic_status "$db" "$topic_id" "im_pm"; then
     # Fehlerfall: pm-skills hat bereits Artefakte geschrieben (vor diesem Aufruf,
     # ADR-009), aber der DB-Statuswechsel ist gescheitert. Das ist ein
-    # Konsistenz-Problem (BR-005: "kein halb aktualisierter Stand"). AC2 hat das
-    # nicht direkt im Scope (AC5 "Abbruch-Sicherheit" mit Idempotenz + AC6
-    # "manuelle Vault-Aenderung" mit Hash-Mismatch sind separate Stories), aber
-    # wir geben einen klaren Fehler aus.
-    echo "FATAL: Statuswechsel 'aktiv' -> 'im_pm' ist fehlgeschlagen -- PM-Artefakte wurden bereits geschrieben, aber Thema bleibt in 'aktiv' (Konsistenz-Problem, AC5-Scope)." >&2
+    # Konsistenz-Problem (BR-005: "kein halb aktualisierter Stand"). AC6
+    # "manuelle Vault-Aenderung" mit Hash-Mismatch ist eine separate Story,
+    # aber wir geben einen klaren Fehler aus.
+    echo "FATAL: Statuswechsel 'aktiv' -> 'im_pm' ist fehlgeschlagen -- PM-Artefakte wurden bereits geschrieben, aber Thema bleibt in 'aktiv' (Konsistenz-Problem)." >&2
     return 1
   else
     echo "Thema-Status: 'aktiv' -> 'im_pm' (architecture.md §7, BR-006)"
+  fi
+
+  if [ "$rc" -eq 2 ]; then
+    echo "PM-Anstoss idempotent abgeschlossen -- kein neues Artefakt, ausstehender Statuswechsel nachgeholt/bestaetigt (gate-pm-anstoss#AC5: gefahrloser Neustart nach Abbruch)."
+    return 2
   fi
 
   echo "PM-Anstoss erfolgreich abgeschlossen -- Uebergabe an agent-flow per pm-import (pm-import liest Vault-Artefakte, ADR-003)."

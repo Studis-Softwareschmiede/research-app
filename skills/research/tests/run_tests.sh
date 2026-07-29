@@ -108,7 +108,21 @@
 # rc=0 mit Status unveraendert 'im_pm' -- KEIN unconditional
 # set_topic_status-Aufruf, da 'im_pm' -> 'im_pm' keine gueltige Transition-
 # Kante ist (Reviewer-Fund, Lesson S-017 2026-07-30). main('dispatch_
-# pm_anstoss') ist der Reachability-Pfad fuer AC2, coder/R07).
+# pm_anstoss') ist der Reachability-Pfad fuer AC2, coder/R07). AC3 (Idempotenz,
+# S-018: pm_dispatch.sh#dispatch_pm_handoff prueft VOR jedem INSERT per SELECT
+# auf (topic_id,result_hash) und liefert rc=2 ohne neue Zeile; die
+# UNIQUE(topic_id,result_hash)-Spalte (008_ra_pm_dispatch.sql) ist der
+# native DB-Backstop dahinter (BR-017); dispatch_pm_anstoss protokolliert den
+# idempotenten Treffer als "gleicher Hash ... bereits vorhanden" statt still
+# durchzulaufen). AC5 (Abbruch-Sicherheit, S-018: dispatch_pm_anstoss haelt
+# den Statuswechsel 'aktiv' -> 'im_pm' NICHT mehr nur im rc=0-Zweig (neuer
+# Dispatch) fest, sondern holt ihn AUCH im idempotenten rc=2-Zweig nach --
+# bricht ein Anstoss genau zwischen dem dispatch_pm_handoff-COMMIT und dem
+# Statuswechsel ab (Prozessabbruch), bleibt ra_topic.status sonst dauerhaft
+# 'aktiv', obwohl der PM-Dispatch bereits geschrieben ist; ein Neustart mit
+# identischem result_hash trifft den idempotenten Pfad und schliesst den
+# Statuswechsel jetzt ab, statt ihn zu uebergehen -- kein halb aktualisierter
+# Stand wird als "aktuell" markiert).
 #
 # last30days selbst ist in diesem Test-Environment nicht installiert (externe,
 # API-/Netzwerk-abhaengige Installation) -- alle last30days-Aufrufe laufen
@@ -1159,6 +1173,43 @@ if [ "$rc_idem" = "2" ] && [ "$DISPATCH_COUNT_IDEM" = "1" ] \
   ok "idempotenter Dispatch: rc=2, UNIQUE-Constraint verhindert Duplikat, Ausgabe zeigt Idempotenz (AC2/AC3)"
 else
   bad "erwartete rc=2/count=1/Idempotenz-Ausgabe, bekam rc=$rc_idem count=$DISPATCH_COUNT_IDEM out=$(cat "$OUT_AC2_IDEM")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC5 -- orchestrator.sh dispatch_pm_anstoss: Neustart nach Abbruch ZWISCHEN dispatch_pm_handoff-COMMIT und Statuswechsel holt den ausstehenden Statuswechsel nach (kein halb aktualisierter Stand) =="
+# Abbruch-Simulation: dispatch_pm_handoff() wird HIER direkt (nicht ueber
+# dispatch_pm_anstoss) aufgerufen -- das bildet exakt den Zustand nach, den
+# ein zwischen COMMIT und dem nachfolgenden set_topic_status abgebrochener
+# Anstoss hinterlaesst: ra_pm_dispatch traegt bereits den Eintrag, aber
+# ra_topic.status ist noch 'aktiv' (der Statuswechsel wurde nie erreicht).
+DB_AC5S="$(new_migrated_db "$TMP/ac5-abort-restart.sqlite")"
+TOPIC_AC5S="$(create_topic "$DB_AC5S" "Thema fuer AC5 Abbruch-Neustart" 2>/dev/null)"
+RUN_AC5S_FULL="$(create_run "$DB_AC5S" "$TOPIC_AC5S" "recherche" "ac5abc12aa31c1e37cd9a5f6e7f8a9b9c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC5S="${RUN_AC5S_FULL%%|*}"
+ARTIFACT_REF_AC5S="Research/PM_Artifacts_${TOPIC_AC5S}_${RUN_AC5S}"
+RESULT_HASH_AC5S="ac5abc12aa31c1e37cd9a5f6e7f8a9b9c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8"
+
+dispatch_pm_handoff "$DB_AC5S" "$TOPIC_AC5S" "$RUN_AC5S" "$RESULT_HASH_AC5S" "$ARTIFACT_REF_AC5S" > /dev/null 2>&1
+TOPIC_STATUS_PRE_AC5S="$(sqlite3 "$DB_AC5S" "SELECT status FROM ra_topic WHERE id = '$TOPIC_AC5S';")"
+DISPATCH_COUNT_PRE_AC5S="$(sqlite3 "$DB_AC5S" "SELECT COUNT(*) FROM ra_pm_dispatch WHERE topic_id = '$TOPIC_AC5S';")"
+if [ "$TOPIC_STATUS_PRE_AC5S" != "aktiv" ] || [ "$DISPATCH_COUNT_PRE_AC5S" != "1" ]; then
+  bad "Abbruch-Simulation fehlgeschlagen: erwartete status=aktiv/dispatch_count=1 VOR dem Neustart, bekam status=$TOPIC_STATUS_PRE_AC5S count=$DISPATCH_COUNT_PRE_AC5S"
+fi
+
+# Neustart: identischer Aufruf (gleicher Hash) ueber den echten
+# dispatch_pm_anstoss-Pfad -- muss den ausstehenden Statuswechsel nachholen,
+# OHNE ein zweites ra_pm_dispatch-Artefakt anzulegen.
+OUT_AC5S="$TMP/ac5s_restart.txt"
+ERR_AC5S="$TMP/ac5s_restart.err"
+rc_ac5s=0
+RA_DB_PATH="$DB_AC5S" \
+  bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC5S" "$RUN_AC5S" "$ARTIFACT_REF_AC5S" > "$OUT_AC5S" 2> "$ERR_AC5S" || rc_ac5s=$?
+TOPIC_STATUS_POST_AC5S="$(sqlite3 "$DB_AC5S" "SELECT status FROM ra_topic WHERE id = '$TOPIC_AC5S';")"
+DISPATCH_COUNT_POST_AC5S="$(sqlite3 "$DB_AC5S" "SELECT COUNT(*) FROM ra_pm_dispatch WHERE topic_id = '$TOPIC_AC5S';")"
+if [ "$rc_ac5s" = "2" ] && [ "$TOPIC_STATUS_POST_AC5S" = "im_pm" ] && [ "$DISPATCH_COUNT_POST_AC5S" = "1" ] \
+  && grep -qi "idempotent" "$OUT_AC5S"; then
+  ok "Neustart nach simuliertem Abbruch: rc=2 (idempotent, kein neues Artefakt), Statuswechsel 'aktiv' -> 'im_pm' NACHGEHOLT statt dauerhaft haengen zu bleiben (AC5, gefahrloser Neustart)"
+else
+  bad "erwartete rc=2/status=im_pm/count=1 nach Neustart, bekam rc=$rc_ac5s status=$TOPIC_STATUS_POST_AC5S count=$DISPATCH_COUNT_POST_AC5S out=$(cat "$OUT_AC5S") err=$(cat "$ERR_AC5S")"
 fi
 
 echo "== @trace gate-pm-anstoss#AC2 -- orchestrator.sh dispatch_pm_anstoss: zweiter Dispatch mit ABWEICHENDEM result_hash auf ein bereits 'im_pm'-Thema bleibt rc=0, Status bleibt 'im_pm' (Lesson S-017, im_pm:im_pm ist keine Transition-Kante) =="

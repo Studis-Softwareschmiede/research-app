@@ -108,9 +108,12 @@ stattdessen so:
    einem Thema ab, das schon im PM-Prozess ist), protokolliert den
    Dispatch in `ra_pm_dispatch` — **idempotent** (`UNIQUE(topic_id,
    result_hash)`, BR-017): ein Wiederholungslauf mit identischem Hash erzeugt
-   kein neues PM-Artefakt (AC3, separate Story) — und setzt den
-   Thema-Status `aktiv → im_pm` (architecture.md §7, BR-006); war das Thema
-   bereits `im_pm`, bleibt der Status unverändert `im_pm`.
+   kein neues PM-Artefakt (AC3) — und setzt den Thema-Status `aktiv → im_pm`
+   (architecture.md §7, BR-006); war das Thema bereits `im_pm`, bleibt der
+   Status unverändert `im_pm`. Bricht ein Anstoss zwischen dem Dispatch-
+   Bookkeeping und diesem Statuswechsel ab, holt ein Wiederholungslauf mit
+   identischem Hash den ausstehenden Statuswechsel nach, statt das Thema
+   dauerhaft in `aktiv` hängen zu lassen (AC5, gefahrloser Neustart).
 
 Ist pm-skills in der aktiven Session nicht verfügbar (Skill/Sub-Agent nicht
 auffindbar), bricht der Skill-Dispatch (Schritt 1) ab, **bevor**

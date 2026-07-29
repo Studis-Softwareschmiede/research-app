@@ -68,6 +68,14 @@
 # "unmapped" ohne Persistenz (E2), security/R03 vor jeder SQL-Interpolation;
 # db_scripts/lib/run.sh#get_run als Lesefunktion fuer die Bewertungsschicht-Anzeige).
 #
+# Covers (gate-pm-anstoss): AC3 (Idempotenz, S-018 -- 008_ra_pm_dispatch.sql:
+# UNIQUE(topic_id,result_hash) als nativer Backstop, roh per direktem INSERT
+# getestet, unabhaengig vom Applikations-seitigen SELECT-vor-INSERT-Check in
+# db_scripts/lib/pm_dispatch.sh#dispatch_pm_handoff, BR-017; die
+# Applikationsschicht-Idempotenz selbst inkl. Statuswechsel-Verdrahtung ist in
+# skills/research/tests/run_tests.sh Gegenstand, dort auch AC5
+# Abbruch-Sicherheit).
+#
 # Aufruf: db_scripts/tests/run_tests.sh
 set -euo pipefail
 
@@ -1329,6 +1337,26 @@ if [ "$MISSING_RUN_RC" -ne 0 ] && [ -z "$MISSING_RUN_OUT" ]; then
   ok "get_run bricht fuer eine nicht existierende run_id mit FATAL ab"
 else
   bad "get_run haette fuer eine nicht existierende run_id fehlschlagen sollen: rc=$MISSING_RUN_RC out='$MISSING_RUN_OUT'"
+fi
+
+echo "== @trace gate-pm-anstoss#AC3,BR-017 -- UNIQUE(topic_id,result_hash) ist der native Backstop gegen doppelte PM-Dispatch-Artefakte (roh, ausserhalb der Data-Access-Funktion pm_dispatch.sh#dispatch_pm_handoff) =="
+PMD_TOPIC="$(create_topic "$TOPIC_DB" "Thema fuer AC3 UNIQUE-Backstop")"
+PMD_HASH="ac3bcd12aa31c1e37cd9a5f6e7f8a9b9c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8"
+PMD_RUN_1="$(create_run "$TOPIC_DB" "$PMD_TOPIC" "recherche" "$PMD_HASH" "weiterverfolgen" 0 1)"
+PMD_RUN_1_ID="${PMD_RUN_1%%|*}"
+PMD_RUN_2="$(create_run "$TOPIC_DB" "$PMD_TOPIC" "recherche" "$PMD_HASH" "weiterverfolgen" 0 1)"
+PMD_RUN_2_ID="${PMD_RUN_2%%|*}"
+
+sqlite3 "$TOPIC_DB" "INSERT INTO ra_pm_dispatch (topic_id, run_id, result_hash, artifact_ref) VALUES ('$PMD_TOPIC', $PMD_RUN_1_ID, '$PMD_HASH', 'Research/PM_Artifacts_first');" > /dev/null
+set +e
+DUP_PMD_ERR="$(sqlite3 "$TOPIC_DB" "INSERT INTO ra_pm_dispatch (topic_id, run_id, result_hash, artifact_ref) VALUES ('$PMD_TOPIC', $PMD_RUN_2_ID, '$PMD_HASH', 'Research/PM_Artifacts_second');" 2>&1)"
+DUP_PMD_RC=$?
+set -e
+DUP_PMD_COUNT="$(sqlite3 "$TOPIC_DB" "SELECT COUNT(*) FROM ra_pm_dispatch WHERE topic_id = '$PMD_TOPIC';")"
+if [ "$DUP_PMD_RC" -ne 0 ] && [ "$DUP_PMD_COUNT" = "1" ] && echo "$DUP_PMD_ERR" | grep -qi "UNIQUE"; then
+  ok "zweiter roher INSERT mit gleichem (topic_id,result_hash) wird vom nativen UNIQUE-Constraint abgelehnt, unabhaengig vom Applikations-Check in dispatch_pm_handoff (AC3, BR-017)"
+else
+  bad "doppelter PM-Dispatch-Eintrag haette vom UNIQUE-Constraint abgelehnt werden muessen, rc=$DUP_PMD_RC count=$DUP_PMD_COUNT err='$DUP_PMD_ERR'"
 fi
 
 echo
