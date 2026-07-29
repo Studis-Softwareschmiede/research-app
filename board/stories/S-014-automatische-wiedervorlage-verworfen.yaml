@@ -2,7 +2,7 @@ id: S-014
 parent: F-004
 title: 'Automatische Wiedervorlage: geparkt->aktiv bei erfuellt/Delta; verworfen bleibt
   verworfen, hinfaellig-Setzen'
-status: Blocked
+status: Done
 priority: P1
 spec: docs/specs/wiedervorlage-meilensteine.md
 implements:
@@ -24,12 +24,11 @@ confidence: low
 tok_est: null
 branch: feat/S-014-automatische-wiedervorlage-geparkt-aktiv-bei-erfuellt-delta-
 pr: null
-blocked_reason: 'coder-Handoff uneindeutig — kein ''Review-Handoff: REVIEW REQUIRED''-Marker
-  gefunden (Iteration 1)'
+blocked_reason: null
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-29T13:44:01Z'
-done_at: null
+updated_at: '2026-07-29T14:08:48Z'
+done_at: '2026-07-29T14:08:47Z'
 claimed_by: MacBook-Pro-von-Alexander.local-35898-1785331817-19746
 claimed_at: '2026-07-29T13:30:21Z'
 tok: '16122986'
