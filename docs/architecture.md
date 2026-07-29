@@ -82,7 +82,7 @@ Schicht 1 ist ein Satz **logischer Orchestrierungs-Pässe** innerhalb des `/rese
 | **Divergence** | berechnet Delta zum Vorlauf über strukturierte Felder (BR-106); bildet den Inhalts-Hash | Datenschicht (Lauf-Historie) | M2/M4 |
 | **Watchlist/Wiedervorlage** | koppelt geparkte Themen an last30days-Watchlist; legt bei Meilenstein-/Delta-Treffer wieder vor | last30days-Watchlist, Datenschicht | M3 |
 | **Gate** | explizite Entscheidungs-Wahl (CLI/Chat bis M5); nie automatisch (BR-102) | Nutzer-Interaktion | M4 |
-| **PM-Handoff** | stösst pm-skills an → Artefakte im Vault; idempotent per ID+Hash (BR-103); übergibt an pm-import | pm-skills, Obsidian-Vault; **nie** direkt ans agent-flow-Board (ADR-003) | M4 |
+| **PM-Handoff** | stösst pm-skills an → Artefakte im Vault; idempotent per ID+Hash (BR-103); übergibt an pm-import. **Zweigeteilt** (ADR-009): Skill-Dispatch agentisch (Claude-Session, Skill-Tool) + Bookkeeping deterministisch (`orchestrator.sh`, kein pm-skills-Zugriff) | pm-skills, Obsidian-Vault; **nie** direkt ans agent-flow-Board (ADR-003) | M4 |
 | **Data-Access** | einzige Schreib-/Lesestelle der Bewertungs-Tabellen (single-writer, ADR-002) | SQLite | M1 |
 
 **Zentrale Boundary-Regel (prüfbar):** Ausser **Data-Access** greift **kein** Pass direkt schreibend auf SQLite zu; ausser **Discovery/Ingest** und **Watchlist** ruft **kein** Pass last30days; ausser **PM-Handoff** berührt **kein** Pass Vault oder pm-skills. Verstösse gegen diese drei Grenzen sind Review-Blocker (`architecture/R01`).
@@ -106,8 +106,8 @@ Schicht 1 ist ein Satz **logischer Orchestrierungs-Pässe** innerhalb des `/rese
 
 **Flow C — Gate + idempotenter PM-Anstoss (M4):**
 1. Gate als explizite Wahl (CLI/Chat bis M5), nie automatisch (BR-102).
-2. Wahl `PM-Anstoss` → PM-Handoff triggert pm-skills → PM-Artefakte im Obsidian-Vault.
-3. Idempotenz-Schlüssel = Themen-ID + Inhalts-Hash: gleicher Schlüssel ⇒ Update, geänderter Hash ⇒ Divergenz-Ausweis (BR-103).
+2. Wahl `PM-Anstoss` → **dieselbe** Claude-Session ruft pm-skills direkt über das Skill-Tool auf (kein Subprocess, ADR-009) → PM-Artefakte im Obsidian-Vault (von pm-skills selbst geschrieben).
+3. Dieselbe Session übergibt die Artefakt-Vault-Referenz an `orchestrator.sh dispatch_pm_anstoss` → Idempotenz-Schlüssel = Themen-ID + Inhalts-Hash: gleicher Schlüssel ⇒ Update, geänderter Hash ⇒ Divergenz-Ausweis (BR-103).
 4. agent-flow `/from-notes` (pm-import) liest die Vault-Artefakte → Board-Items. research-app schreibt **nie** direkt ins Board (ADR-003).
 
 **Flow D — Dogfooding (M6):** ein Thema durchläuft A → C → agent-flow end-to-end; kein neuer Code, Verifikation der Kette.
@@ -135,7 +135,7 @@ Invarianten: `geparkt` nur mit Meilenstein (BR-101); Übergang nach `übergeben`
 | Dienst | Rolle | Vertragspunkt |
 |---|---|---|
 | **last30days** (CLI, installiert) | Recherche-Engine + Persistenz-Basis | Discovery/Thema-Modus; `--emit=json`, `--save-dir`, `--store`/Watchlist. **Konsumiert wird der JSON-Emit + dokumentierte Store-Sicht — read-only** (ADR-002). Schema-Instabilität ist Risiko (C-007) → Kopplung minimal halten. |
-| **pm-skills** (Plugin, ganz installiert) | erzeugt PM-Artefakte (PRD/Hypothesen/AC…) im Vault | wird nur angestossen; **unverändert** (kein Fork, C-004). Idempotenz leistet PM-Handoff, nicht pm-skills. |
+| **pm-skills** (Plugin, ganz installiert) | erzeugt PM-Artefakte (PRD/Hypothesen/AC…) im Vault | wird nur angestossen; **unverändert** (kein Fork, C-004). Idempotenz leistet PM-Handoff, nicht pm-skills. **Kein CLI** — reine Claude-Code-Skills/Sub-Agenten (`SKILL.md`, kein `bin`/Kommandozeilen-Interface); Aufruf ausschliesslich über das Skill-Tool der aktiven Session, nie per Bash-Subprocess (ADR-009). |
 | **Obsidian-Vault** | Ablageort der PM-Artefakte | nur vom Mac erreichbar → bestimmt Betriebsort (C-002). Artefakt-Frontmatter (`artifact:`, `version`) ist Ankerfläche für pm-import. |
 | **agent-flow `/from-notes` (pm-import)** | liest Vault-Artefakte → Board | research-app schreibt Artefakte in den Vault, **nie** direkt ins Board. Idempotenz-Muster gespiegelt aus pm-import (`sync_hash`/`version`, AC6) — eine Ebene früher. |
 | **Deep-Research** | zweite Evidenzquelle | Regelfall; kostentreibend (Claude-Token). Ausfall → Momentum-Flag (BR-104). |
@@ -199,5 +199,6 @@ Format: MADR-knapp (`architecture/R07/R08`) — Confidence + Reevaluations-Trigg
 - **ADR-006 · OFFEN · Verortung/Verteilung des `/research`-Skills.** Empfehlung: projekt-lokal in `skills/research/` dieses Repos (projektspezifische Orchestrierung, keine wiederverwendbare Fabrik-Capability). Siehe Offene Fragen **F-2**.
 - **ADR-007 · OFFEN · Stack der Anzeige-App (M5).** Flutter vs. Angular vs. HTML/JS. Siehe Offene Fragen **F-1**.
 - **ADR-008 · OFFEN · Physische Kopplung der Bewertungs-Tabellen an die last30days-DB** (selbes File vs. separates File + Referenz). dba + Owner. Siehe Offene Fragen **F-3**.
+- **ADR-009 · 2026-07-29 · PM-Handoff-Aufruf: Skill-Tool-Dispatch durch die aktive Session, kein CLI/Subprocess.** pm-skills ist kein CLI-Tool, sondern ein Satz Claude-Code-Skills/Sub-Agenten (`SKILL.md`, kein `bin`-Entry-Point). Der PM-Handoff-Pass ruft pm-skills daher **nie** aus einem eigenständigen Bash-Prozess (`orchestrator.sh`) heraus auf, sondern über das Skill-Tool derselben Claude-Session, die bereits das `/research`-Skill ausführt und die Gate-Wahl (AC1) entgegengenommen hat. `orchestrator.sh` übernimmt ausschliesslich das deterministische Bookkeeping (Idempotenz-Dispatch, Status-Transition) und erhält die Vault-Artefakt-Referenz als Eingabeparameter von der aufrufenden Session — es ermittelt sie nie selbst. *Begründung:* verifiziert gegen die installierte pm-skills-Plugin-Version — kein CLI-Interface vorhanden, nur Skill-Dateien; ein Bash-Skript kann eine Skill-Tool-Dispatch-Kette nicht wie ein CLI-Programm aufrufen (gate-pm-anstoss.md AC2). *Verworfen:* ein erfundenes pm-skills-CLI-Interface (`pm-skills generate --vault-path …`) — existiert nicht und wäre ein Fork-Risiko (widerspricht C-004 „pm-skills bleibt unverändert"). *Confidence:* hoch. *Reeval-Trigger:* pm-skills veröffentlicht ein offizielles CLI/npm-Paket mit Kommandozeilen-Interface, oder headless-Automatisierung (ADR-005-Reeval) macht einen `claude -p`-Dispatch (analog `board-feature-drain.sh#generate_dossier`) zur Regel statt zur späteren Ausnahme.
 
 > **Offene Architektur-Entscheide** (ADR-006..008) sind bewusst nicht final gesetzt — der Katalog steht in der Rückgabe des `architekt`-Laufs (Stufe-b) und wird nach Owner-Entscheid hier als akzeptierte ADR nachgezogen.

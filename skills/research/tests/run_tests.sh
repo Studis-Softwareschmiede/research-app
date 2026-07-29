@@ -96,8 +96,19 @@
 # 'parken'/'verwerfen'); render_evaluation/main('evaluation') bindet das Gate
 # automatisch in den Bewertungsschicht-Brief ein; ohne die vorgelagerte
 # Empfehlung 'weiterverfolgen' erscheint KEIN Gate-Text -- reine Anzeige,
-# loest selbst keinen PM-Anstoss aus (C-004/BR-102, AC2-AC6 nicht Gegenstand
-# dieser Story).
+# loest selbst keinen PM-Anstoss aus (C-004/BR-102)). AC2 (PM-Anstoss-Bookkeeping,
+# S-017, ADR-009: orchestrator.sh#dispatch_pm_anstoss -- ruft pm-skills NIE
+# selbst auf (kein CLI/Subprocess); nimmt die vom Aufrufer (Skill-Tool-Dispatch
+# derselben Session) bereits erzeugte Vault-Pfad-Referenz als drittes Argument
+# <artifact-ref> entgegen und uebernimmt ausschliesslich das deterministische
+# Bookkeeping: pm_dispatch.sh#dispatch_pm_handoff (idempotent via
+# UNIQUE(topic_id,result_hash), BR-017, AC3-Vorbereitung); Statuswechsel
+# 'aktiv' -> 'im_pm' (BR-006, architecture.md Zustandsautomat); ein zweiter
+# Dispatch mit abweichendem result_hash auf ein bereits 'im_pm'-Thema bleibt
+# rc=0 mit Status unveraendert 'im_pm' -- KEIN unconditional
+# set_topic_status-Aufruf, da 'im_pm' -> 'im_pm' keine gueltige Transition-
+# Kante ist (Reviewer-Fund, Lesson S-017 2026-07-30). main('dispatch_
+# pm_anstoss') ist der Reachability-Pfad fuer AC2, coder/R07).
 #
 # last30days selbst ist in diesem Test-Environment nicht installiert (externe,
 # API-/Netzwerk-abhaengige Installation) -- alle last30days-Aufrufe laufen
@@ -133,6 +144,8 @@ source "$REPO_ROOT/db_scripts/lib/milestone.sh"
 source "$REPO_ROOT/db_scripts/lib/run.sh"
 # shellcheck source=../../../db_scripts/lib/swot_item.sh
 source "$REPO_ROOT/db_scripts/lib/swot_item.sh"
+# shellcheck source=../../../db_scripts/lib/pm_dispatch.sh
+source "$REPO_ROOT/db_scripts/lib/pm_dispatch.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -1084,6 +1097,110 @@ else
   bad "erwartete leere Kandidatenliste + unveraendertes 'verworfen', bekam candidates='$CANDIDATES_DISCARDED' status=$TOPIC_DISCARDED_STATUS out=$OUT_AC5"
 fi
 
+
+echo "== @trace gate-pm-anstoss#AC2 -- orchestrator.sh dispatch_pm_anstoss: PM-Anstoss-Bookkeeping mit Status-Wechsel (aktiv -> im_pm), artifact-ref kommt vom Aufrufer (ADR-009) =="
+# Test Setup: Thema + Lauf + Empfehlung 'weiterverfolgen' vorbereiten
+DB_AC2="$(new_migrated_db "$TMP/ac2-pm-dispatch.sqlite")"
+TOPIC_AC2="$(create_topic "$DB_AC2" "Thema fuer AC2 PM-Anstoss" 2>/dev/null)"
+RUN_AC2_FULL="$(create_run "$DB_AC2" "$TOPIC_AC2" "recherche" "ca761c12aa31c1e37cd9a5f6e7f8a9b9c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC2="${RUN_AC2_FULL%%|*}"  # Extract id from id|version
+
+# artifact-ref simuliert die Vault-Pfad-Referenz, die die aufrufende Session
+# bereits VOR diesem Aufruf ueber das Skill-Tool per pm-skills erzeugt hat
+# (ADR-009, Schritt 1 -- kein Subprocess-Aufruf, kein Fake-CLI-Stub noetig).
+ARTIFACT_REF_AC2="Research/PM_Artifacts_${TOPIC_AC2}_${RUN_AC2}"
+
+# Test dispatch_pm_anstoss (echter Orchestrator-Aufruf)
+ORCHESTRATOR_SCRIPT="$RESEARCH_DIR/scripts/orchestrator.sh"
+OUT_AC2="$TMP/ac2_out.txt"
+ERR_AC2="$TMP/ac2_err.txt"
+rc_ac2=0
+RA_DB_PATH="$DB_AC2" \
+  bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC2" "$RUN_AC2" "$ARTIFACT_REF_AC2" > "$OUT_AC2" 2> "$ERR_AC2" || rc_ac2=$?
+
+# Prüfungen: ra_pm_dispatch existiert, Status ist 'im_pm', Erfolgs-Meldung
+DISPATCH_COUNT="$(sqlite3 "$DB_AC2" "SELECT COUNT(*) FROM ra_pm_dispatch WHERE topic_id = '$TOPIC_AC2';")"
+TOPIC_STATUS="$(sqlite3 "$DB_AC2" "SELECT status FROM ra_topic WHERE id = '$TOPIC_AC2';")"
+DISPATCHED_REF="$(sqlite3 "$DB_AC2" "SELECT artifact_ref FROM ra_pm_dispatch WHERE topic_id = '$TOPIC_AC2';")"
+if [ "$rc_ac2" = "0" ] && [ "$DISPATCH_COUNT" = "1" ] && [ "$TOPIC_STATUS" = "im_pm" ] \
+  && [ "$DISPATCHED_REF" = "$ARTIFACT_REF_AC2" ] \
+  && grep -qi "erfolgreich abgeschlossen" "$OUT_AC2"; then
+  ok "PM-Dispatch protokolliert mit dem vom Aufrufer gelieferten artifact-ref, Status 'aktiv' -> 'im_pm', Erfolgs-Meldung sichtbar (AC2 Happy Path, ADR-009)"
+else
+  bad "erwartete rc=0/dispatch_count=1/status=im_pm/ref=$ARTIFACT_REF_AC2/Erfolgsmeldung, bekam rc=$rc_ac2 count=$DISPATCH_COUNT status=$TOPIC_STATUS ref=$DISPATCHED_REF out=$(cat "$OUT_AC2") err=$(cat "$ERR_AC2")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC2 -- orchestrator.sh dispatch_pm_anstoss: fehlendes artifact-ref bricht ab (kein DB-Schreibversuch ohne Aufrufer-Referenz, ADR-009/E2) =="
+DB_AC2_NOREF="$(new_migrated_db "$TMP/ac2-noref.sqlite")"
+TOPIC_AC2_NOREF="$(create_topic "$DB_AC2_NOREF" "Thema ohne artifact-ref" 2>/dev/null)"
+RUN_AC2_NOREF_FULL="$(create_run "$DB_AC2_NOREF" "$TOPIC_AC2_NOREF" "recherche" "ea761c12aa31c1e37cd9a5f6e7f8a9b9c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC2_NOREF="${RUN_AC2_NOREF_FULL%%|*}"
+ERR_AC2_NOREF="$TMP/ac2_noref.err"
+rc_noref=0
+RA_DB_PATH="$DB_AC2_NOREF" \
+  bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC2_NOREF" "$RUN_AC2_NOREF" "" > /dev/null 2> "$ERR_AC2_NOREF" || rc_noref=$?
+DISPATCH_COUNT_NOREF="$(sqlite3 "$DB_AC2_NOREF" "SELECT COUNT(*) FROM ra_pm_dispatch;")"
+if [ "$rc_noref" != "0" ] && [ "$DISPATCH_COUNT_NOREF" = "0" ] && grep -qi "artifact-ref" "$ERR_AC2_NOREF"; then
+  ok "fehlendes artifact-ref bricht mit FATAL ab, kein ra_pm_dispatch-Eintrag (ADR-009, orchestrator.sh ermittelt es nie selbst)"
+else
+  bad "erwartete rc!=0/dispatch_count=0/FATAL zu artifact-ref, bekam rc=$rc_noref count=$DISPATCH_COUNT_NOREF err=$(cat "$ERR_AC2_NOREF")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC2,AC3 -- orchestrator.sh dispatch_pm_anstoss: Idempotenz (gleicher Hash = rc=2, kein neuer Dispatch) =="
+# Zweiter Aufruf mit identischem Hash
+OUT_AC2_IDEM="$TMP/ac2_idem.txt"
+ERR_AC2_IDEM="$TMP/ac2_idem.err"
+rc_idem=0
+RA_DB_PATH="$DB_AC2" \
+  bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC2" "$RUN_AC2" "$ARTIFACT_REF_AC2" > "$OUT_AC2_IDEM" 2> "$ERR_AC2_IDEM" || rc_idem=$?
+DISPATCH_COUNT_IDEM="$(sqlite3 "$DB_AC2" "SELECT COUNT(*) FROM ra_pm_dispatch WHERE topic_id = '$TOPIC_AC2';")"
+if [ "$rc_idem" = "2" ] && [ "$DISPATCH_COUNT_IDEM" = "1" ] \
+  && grep -qi "idempotent" "$OUT_AC2_IDEM"; then
+  ok "idempotenter Dispatch: rc=2, UNIQUE-Constraint verhindert Duplikat, Ausgabe zeigt Idempotenz (AC2/AC3)"
+else
+  bad "erwartete rc=2/count=1/Idempotenz-Ausgabe, bekam rc=$rc_idem count=$DISPATCH_COUNT_IDEM out=$(cat "$OUT_AC2_IDEM")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC2 -- orchestrator.sh dispatch_pm_anstoss: zweiter Dispatch mit ABWEICHENDEM result_hash auf ein bereits 'im_pm'-Thema bleibt rc=0, Status bleibt 'im_pm' (Lesson S-017, im_pm:im_pm ist keine Transition-Kante) =="
+# Zweiter, unabhaengiger Lauf auf demselben (bereits im_pm) Thema mit einem
+# ANDEREN result_hash -- reproduziert den Reviewer-Fund: set_topic_status
+# durfte hier NICHT unconditional aufgerufen werden (Kante im_pm:im_pm fehlt
+# in ra_topic_valid_transition), sonst rc=1 trotz erfolgreich geschriebenem
+# ra_pm_dispatch-Eintrag.
+RUN_AC2_DIVERGENT_FULL="$(create_run "$DB_AC2" "$TOPIC_AC2" "recherche" "fb761c12aa31c1e37cd9a5f6e7f8a9b9c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC2_DIVERGENT="${RUN_AC2_DIVERGENT_FULL%%|*}"
+ARTIFACT_REF_AC2_DIVERGENT="Research/PM_Artifacts_${TOPIC_AC2}_${RUN_AC2_DIVERGENT}"
+OUT_AC2_DIVERGENT="$TMP/ac2_divergent.txt"
+ERR_AC2_DIVERGENT="$TMP/ac2_divergent.err"
+rc_divergent=0
+RA_DB_PATH="$DB_AC2" \
+  bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC2" "$RUN_AC2_DIVERGENT" "$ARTIFACT_REF_AC2_DIVERGENT" > "$OUT_AC2_DIVERGENT" 2> "$ERR_AC2_DIVERGENT" || rc_divergent=$?
+DISPATCH_COUNT_DIVERGENT="$(sqlite3 "$DB_AC2" "SELECT COUNT(*) FROM ra_pm_dispatch WHERE topic_id = '$TOPIC_AC2';")"
+TOPIC_STATUS_DIVERGENT="$(sqlite3 "$DB_AC2" "SELECT status FROM ra_topic WHERE id = '$TOPIC_AC2';")"
+if [ "$rc_divergent" = "0" ] && [ "$DISPATCH_COUNT_DIVERGENT" = "2" ] && [ "$TOPIC_STATUS_DIVERGENT" = "im_pm" ] \
+  && grep -qi "bleibt 'im_pm'" "$OUT_AC2_DIVERGENT"; then
+  ok "zweiter Dispatch mit abweichendem Hash auf bereits-im_pm-Thema: rc=0, neuer ra_pm_dispatch-Eintrag, Status bleibt 'im_pm' (kein irrefuehrender rc=1 trotz committetem Write)"
+else
+  bad "erwartete rc=0/count=2/status=im_pm, bekam rc=$rc_divergent count=$DISPATCH_COUNT_DIVERGENT status=$TOPIC_STATUS_DIVERGENT out=$(cat "$OUT_AC2_DIVERGENT") err=$(cat "$ERR_AC2_DIVERGENT")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC2,BR-102 -- orchestrator.sh dispatch_pm_anstoss: Vorbedingung 'recommendation=weiterverfolgen' wird geprueft =="
+# Neues Thema mit Empfehlung 'parken'
+DB_AC2_COND="$(new_migrated_db "$TMP/ac2-cond.sqlite")"
+TOPIC_AC2_COND="$(create_topic "$DB_AC2_COND" "Thema mit Empfehlung parken" 2>/dev/null)"
+RUN_AC2_COND_FULL="$(create_run "$DB_AC2_COND" "$TOPIC_AC2_COND" "recherche" "db761c12aa31c1e37cd9a5f6e7f8a9b9c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8" "parken" "0" "1" 2>/dev/null)"
+RUN_AC2_COND="${RUN_AC2_COND_FULL%%|*}"  # Extract id from id|version
+
+OUT_AC2_COND="$TMP/ac2_cond.txt"
+ERR_AC2_COND="$TMP/ac2_cond.err"
+rc_cond=0
+RA_DB_PATH="$DB_AC2_COND" \
+  bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC2_COND" "$RUN_AC2_COND" "Research/PM_Artifacts_cond" > "$OUT_AC2_COND" 2> "$ERR_AC2_COND" || rc_cond=$?
+if [ "$rc_cond" != "0" ] && grep -qi "weiterverfolgen" "$ERR_AC2_COND"; then
+  ok "Vorbedingung 'recommendation=weiterverfolgen' wird geprueft und durchgesetzt (AC2, BR-102)"
+else
+  bad "erwartete rc!=0 + Fehler-Meldung mit 'weiterverfolgen', bekam rc=$rc_cond err=$(cat "$ERR_AC2_COND")"
+fi
 
 echo
 echo "Ergebnis: $pass OK, $fail FAIL"

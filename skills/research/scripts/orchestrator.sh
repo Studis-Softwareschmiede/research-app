@@ -57,6 +57,8 @@ source "$REPO_ROOT/db_scripts/lib/milestone.sh"
 source "$REPO_ROOT/db_scripts/lib/run.sh"
 # shellcheck source=../../../db_scripts/lib/swot_item.sh
 source "$REPO_ROOT/db_scripts/lib/swot_item.sh"
+# shellcheck source=../../../db_scripts/lib/pm_dispatch.sh
+source "$REPO_ROOT/db_scripts/lib/pm_dispatch.sh"
 
 RA_DB_PATH="${RA_DB_PATH:-research-app.sqlite}"
 RA_SAVE_DIR="${RA_SAVE_DIR:-last30days-runs}"
@@ -389,6 +391,137 @@ render_evaluation() {
   return 0
 }
 
+# dispatch_pm_anstoss <db-path> <topic-id> <run-id> <artifact-ref>
+# gate-pm-anstoss#AC2 (ADR-009): deterministisches Bookkeeping NACH dem
+# agentischen Skill-Dispatch. pm-skills ist kein CLI-Tool und wird von diesem
+# Skript NIE aufgerufen -- die aufrufende Claude-Session hat pm-skills bereits
+# im selben Turn ueber das Skill-Tool angestossen und liefert die dabei
+# erzeugte Vault-Pfad-Referenz als <artifact-ref> mit (gate-pm-anstoss.md
+# "AC2 -- Technischer Aufrufmechanismus", Schritt 2). Dieses Skript uebernimmt
+# ausschliesslich:
+#   - Vorbedingungen pruefen (Lauf existiert, Empfehlung ist 'weiterverfolgen',
+#     Thema-Status 'aktiv')
+#   - Dispatch in ra_pm_dispatch protokollieren (idempotent via UNIQUE)
+#   - Status-Transition 'aktiv' -> 'im_pm' (BR-006, architecture.md §7)
+#
+# rc=0: neuer Dispatch, Status gesetzt
+# rc=2: idempotenter Dispatch (gleicher Hash, bereits erfolgt) -- Status bleibt 'im_pm'
+# rc=1: Fehler (Vorbedingung, DB-Fehler) -- kein Statuswechsel
+dispatch_pm_anstoss() {
+  local db="$1"
+  local topic_id="$2"
+  local run_id="$3"
+  local artifact_ref="$4"
+  local row recommendation momentum_only topic_title
+  local result_hash rc
+
+  check_store_or_die "$db" || return 1
+
+  if [ -z "$artifact_ref" ]; then
+    echo "FATAL: <artifact-ref> fehlt -- orchestrator.sh ruft pm-skills nie selbst auf (ADR-009), die Vault-Pfad-Referenz muss vom Aufrufer geliefert werden. Aufruf: dispatch_pm_anstoss <topic-id> <run-id> <artifact-ref>" >&2
+    return 1
+  fi
+
+  # Format-Guard fuer topic_id vor SQL-Interpolation (security/R03).
+  if ! [[ "$topic_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+    echo "FATAL: Themen-ID '$topic_id' verletzt das UUID-Format -- PM-Anstoss abgelehnt (security/R03)." >&2
+    return 1
+  fi
+
+  if ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
+    echo "FATAL: Lauf-ID '$run_id' ist keine gueltige Ganzzahl -- PM-Anstoss abgelehnt (security/R03)." >&2
+    return 1
+  fi
+
+  # Lauf auslesen (recommendation, momentum_only).
+  row="$(get_run "$db" "$run_id")" || return 1
+  IFS='|' read -r recommendation momentum_only <<< "$row"
+
+  # Vorbedingung: Empfehlung muss 'weiterverfolgen' sein (gate-pm-anstoss#AC1, BR-102).
+  if [ "$recommendation" != "weiterverfolgen" ]; then
+    echo "FATAL: PM-Anstoss erfordert Empfehlung 'weiterverfolgen', Lauf $run_id hat '$recommendation' -- Anstoss abgelehnt." >&2
+    return 1
+  fi
+
+  # Thema auslesen + pruefen (status='aktiv', title).
+  local escaped_id="${topic_id//\'/\'\'}"
+  row="$(sqlite3 "$db" "SELECT title, status FROM ra_topic WHERE id = '$escaped_id';" 2>/dev/null)"
+  if [ -z "$row" ]; then
+    echo "FATAL: Thema '$topic_id' existiert nicht -- PM-Anstoss abgelehnt." >&2
+    return 1
+  fi
+  IFS='|' read -r topic_title current_status <<< "$row"
+
+  # 'aktiv' = Erst-Anstoss; 'im_pm' = das Thema wurde bereits per PM-Anstoss
+  # uebergeben -- ein erneuter Aufruf mit identischem Hash muss idempotent
+  # durchlaufen koennen (AC3, dispatch_pm_handoff prueft das gleich danach),
+  # sonst wuerde jeder Wiederholungs-Anstoss (Skript-Neustart nach Abbruch,
+  # AC5) hier schon rejected, BEVOR die Idempotenz-Pruefung ueberhaupt greift.
+  if [ "$current_status" != "aktiv" ] && [ "$current_status" != "im_pm" ]; then
+    echo "FATAL: PM-Anstoss ist nur aus Status 'aktiv' (Erst-Anstoss) oder 'im_pm' (idempotenter Wiederholungs-Anstoss) moeglich, Thema '$topic_id' ist '$current_status' -- abgelehnt (BR-006)." >&2
+    return 1
+  fi
+
+  # result_hash auslesen (fuer Idempotenz in ra_pm_dispatch).
+  result_hash="$(sqlite3 "$db" "SELECT result_hash FROM ra_run WHERE id = $run_id;" 2>/dev/null)"
+  if [ -z "$result_hash" ]; then
+    echo "FATAL: result_hash fuer Lauf $run_id nicht gefunden -- PM-Anstoss abgelehnt." >&2
+    return 1
+  fi
+
+  # Alle Pruefungen OK: Bookkeeping (der Skill-Dispatch selbst ist bereits
+  # VOR diesem Aufruf durch die Session ueber das Skill-Tool erfolgt, ADR-009).
+  echo "-- PM-Anstoss (gate-pm-anstoss#AC2, ADR-009) --"
+  echo "Thema: $topic_title (ID: $topic_id)"
+  echo "Lauf: $run_id (Empfehlung: $recommendation)"
+  echo "PM-Artefakte im Vault (vom Aufrufer geliefert): $artifact_ref"
+
+  # Dispatch in ra_pm_dispatch protokollieren (idempotent). rc=2 (Idempotenz)
+  # ist ein regulaerer, erwarteter Rueckgabewert dieser Funktion -- set -e
+  # wuerde die Funktion sonst sofort bei rc=2 abbrechen, BEVOR die
+  # Idempotenz-Meldung unten ausgegeben wird (analog set +e/set -e um
+  # acquire_topic_lock weiter oben in dieser Datei).
+  set +e
+  dispatch_pm_handoff "$db" "$topic_id" "$run_id" "$result_hash" "$artifact_ref"
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    echo "PM-Dispatch protokolliert (neue Eingabe)."
+  elif [ "$rc" -eq 2 ]; then
+    echo "PM-Anstoss ist idempotent: gleicher Hash zum Thema bereits vorhanden (BR-017, AC3)."
+    # Status bleibt 'im_pm', kein erneuter Wechsel.
+    return 2
+  else
+    echo "FATAL: PM-Dispatch-Protokollierung fehlgeschlagen -- Statusaenderung wird nicht durchgefuehrt." >&2
+    return 1
+  fi
+
+  # Status-Wechsel: aktiv -> im_pm (BR-006, architecture.md §7). Ausnahme: war
+  # das Thema schon 'im_pm' (zweiter Dispatch mit abweichendem result_hash,
+  # z.B. ein weiterer Recherche-Lauf waehrend das Thema noch im PM-Prozess
+  # ist), ist der Status bereits korrekt -- 'im_pm' -> 'im_pm' ist KEINE
+  # gueltige Kante in ra_topic_valid_transition, ein unconditional-Aufruf
+  # wuerde hier faelschlich fehlschlagen, obwohl der Dispatch oben bereits
+  # erfolgreich committet wurde (Lesson S-017, 2026-07-30).
+  if [ "$current_status" = "im_pm" ]; then
+    echo "Thema-Status: bleibt 'im_pm' (bereits im PM-Prozess; aktualisierter Dispatch protokolliert)."
+  elif ! set_topic_status "$db" "$topic_id" "im_pm"; then
+    # Fehlerfall: pm-skills hat bereits Artefakte geschrieben (vor diesem Aufruf,
+    # ADR-009), aber der DB-Statuswechsel ist gescheitert. Das ist ein
+    # Konsistenz-Problem (BR-005: "kein halb aktualisierter Stand"). AC2 hat das
+    # nicht direkt im Scope (AC5 "Abbruch-Sicherheit" mit Idempotenz + AC6
+    # "manuelle Vault-Aenderung" mit Hash-Mismatch sind separate Stories), aber
+    # wir geben einen klaren Fehler aus.
+    echo "FATAL: Statuswechsel 'aktiv' -> 'im_pm' ist fehlgeschlagen -- PM-Artefakte wurden bereits geschrieben, aber Thema bleibt in 'aktiv' (Konsistenz-Problem, AC5-Scope)." >&2
+    return 1
+  else
+    echo "Thema-Status: 'aktiv' -> 'im_pm' (architecture.md §7, BR-006)"
+  fi
+
+  echo "PM-Anstoss erfolgreich abgeschlossen -- Uebergabe an agent-flow per pm-import (pm-import liest Vault-Artefakte, ADR-003)."
+  return 0
+}
+
 # research_thema <db-path> <topic-title> <save-dir-base>
 # Thema-Modus (AC1): last30days ueber lib/last30days_client.sh aufrufen,
 # Thema ueber die Data-Access-Schicht anlegen/wiederverwenden (AC6),
@@ -498,12 +631,18 @@ Usage:
   orchestrator.sh thema "<Thema-String>" [save-dir]
   orchestrator.sh recommend <topic-id>
   orchestrator.sh evaluation <run-id>
+  orchestrator.sh dispatch_pm_anstoss <topic-id> <run-id> <artifact-ref>
 
 Env:
-  RA_DB_PATH            Pfad zur research-app.sqlite (Default: research-app.sqlite)
-  RA_LAST30DAYS_CMD     last30days-Kommando (Default: last30days, auf PATH aufgeloest)
-  RA_LOCK_HOLDER        ra_topic_lock.holder-Wert (Default: research)
-  RA_LOCK_TTL_SECONDS   Lock-TTL in Sekunden (Default: 1800)
+  RA_DB_PATH                    Pfad zur research-app.sqlite (Default: research-app.sqlite)
+  RA_LAST30DAYS_CMD             last30days-Kommando (Default: last30days, auf PATH aufgeloest)
+  RA_LOCK_HOLDER                ra_topic_lock.holder-Wert (Default: research)
+  RA_LOCK_TTL_SECONDS           Lock-TTL in Sekunden (Default: 1800)
+
+Hinweis (ADR-009): <artifact-ref> ist die Vault-Pfad-Referenz der PM-Artefakte,
+die die aufrufende Claude-Session bereits VOR diesem Aufruf ueber das
+Skill-Tool per pm-skills erzeugt hat -- orchestrator.sh ruft pm-skills nie
+selbst auf und ermittelt <artifact-ref> nie selbst.
 USAGE
 }
 
@@ -524,6 +663,12 @@ main() {
     evaluation)
       local run_id="${2:-}"
       render_evaluation "$RA_DB_PATH" "$run_id"
+      ;;
+    dispatch_pm_anstoss)
+      local topic_id="${2:-}"
+      local run_id="${3:-}"
+      local artifact_ref="${4:-}"
+      dispatch_pm_anstoss "$RA_DB_PATH" "$topic_id" "$run_id" "$artifact_ref"
       ;;
     *)
       usage

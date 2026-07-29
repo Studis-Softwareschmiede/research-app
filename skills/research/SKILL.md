@@ -68,18 +68,59 @@ Schicht:
    Businessplan-Template bei `weiterverfolgen`) sowie das Entscheidungs-Gate
    als Teil des Recherche-Briefs.
 
-## Entscheidungs-Gate (AC1, `docs/specs/gate-pm-anstoss.md`, S-016)
+## Entscheidungs-Gate & PM-Anstoss (AC1+AC2, `docs/specs/gate-pm-anstoss.md`, S-016+S-017)
 
 Ist die Empfehlung des gerade gerenderten Laufs `weiterverfolgen`, hängt
 `orchestrator.sh#print_gate_prompt` an den Brief eine **explizite** Wahl an:
 den Lauf jetzt per PM-Anstoss an den PM-Prozess übergeben, oder
-zurückstellen. Die Wahl ist bis M5 eine reine CLI-/Chat-Abfrage (ADR-005) —
-Claude stellt sie dem Owner im Chat und wartet auf eine explizite Antwort.
-**Ohne diese Entscheidung passiert nichts** (C-004/BR-102, kein
-Automatik-Anstoss) — der eigentliche PM-Anstoss (pm-skills-Aufruf über den
-PM-Handoff-Pass, AC2–AC6) ist **nicht** Teil dieser Story und wird hier noch
-nicht ausgelöst. Bei `parken`/`verwerfen` erscheint das Gate nicht (kein Pfad
-nach `im_pm` aus diesen Empfehlungen, architecture.md Zustandsautomat).
+zurückstellen (AC1, S-016). Die Wahl ist bis M5 eine reine CLI-/Chat-Abfrage
+(ADR-005) — Claude stellt sie dem Owner im Chat und wartet auf eine explizite
+Antwort. **Ohne diese Entscheidung passiert nichts** (C-004/BR-102, kein
+Automatik-Anstoss). Bei `parken`/`verwerfen` erscheint das Gate nicht (kein
+Pfad nach `im_pm` aus diesen Empfehlungen, architecture.md Zustandsautomat).
+
+**AC2 (S-017, ADR-009): PM-Anstoss-Execution — zweigeteilt, pm-skills ist kein
+CLI-Tool.** pm-skills besteht ausschließlich aus Claude-Code-Skills/Sub-Agenten
+(`SKILL.md`-Dateien) — es hat keinen `bin`-Eintrag, kein Kommandozeilen-
+Interface. `orchestrator.sh` kann pm-skills daher **nicht** als Subprocess
+aufrufen. Entscheidet sich der Owner für "PM-Anstoss", läuft der Handoff
+stattdessen so:
+
+1. **Skill-Dispatch (agentisch, im selben Turn):** Claude — dieselbe Session,
+   die gerade das `/research`-Skill ausführt und die Gate-Wahl entgegengenommen
+   hat — ruft **über das Skill-Tool** den passenden pm-skills-Workflow auf
+   (z. B. `pm-skills:chain` oder einen passenden `workflow-*`), mit dem
+   Themen-Brief (Titel, Empfehlung, SWOT, Meilenstein-Status) als Kontext.
+   pm-skills erzeugt die Konzept-/Spec-Artefakte und schreibt sie selbst in den
+   Obsidian-Vault — kein Rückkanal an ein Bash-Skript.
+2. **Deterministisches Bookkeeping (bash, kein pm-skills-Zugriff):** Erst NACH
+   abgeschlossenem Skill-Dispatch ruft dieselbe Session:
+
+   ```bash
+   skills/research/scripts/orchestrator.sh dispatch_pm_anstoss <topic-id> <run-id> <artifact-ref>
+   ```
+
+   `<artifact-ref>` ist die Vault-Pfad-Referenz der eben erzeugten Artefakte —
+   die Session kennt sie aus dem Skill-Ergebnis, sie wird **nie** von
+   `orchestrator.sh` selbst ermittelt. Der Befehl prüft die Vorbedingungen
+   (Empfehlung `weiterverfolgen`, Thema-Status `aktiv` **oder** bereits
+   `im_pm` — letzteres deckt einen wiederholten/divergierenden Dispatch zu
+   einem Thema ab, das schon im PM-Prozess ist), protokolliert den
+   Dispatch in `ra_pm_dispatch` — **idempotent** (`UNIQUE(topic_id,
+   result_hash)`, BR-017): ein Wiederholungslauf mit identischem Hash erzeugt
+   kein neues PM-Artefakt (AC3, separate Story) — und setzt den
+   Thema-Status `aktiv → im_pm` (architecture.md §7, BR-006); war das Thema
+   bereits `im_pm`, bleibt der Status unverändert `im_pm`.
+
+Ist pm-skills in der aktiven Session nicht verfügbar (Skill/Sub-Agent nicht
+auffindbar), bricht der Skill-Dispatch (Schritt 1) ab, **bevor**
+`orchestrator.sh dispatch_pm_anstoss` überhaupt aufgerufen wird — kein
+Halb-Artefakt, kein DB-Schreibversuch ohne `artifact-ref` (E2).
+
+**Übergabe an agent-flow:** research-app schreibt **nie** direkt ins
+agent-flow-Board (ADR-003). Stattdessen liest `agent-flow#pm-import`
+(separate Story) die Vault-Artefakte ein und erstellt die Board-Items.
+Dies ermöglicht ein decoupled, wiederverwendbares Ingest-Muster.
 
 ## Voraussetzungs-Überblick (AC5, S-011)
 
@@ -129,7 +170,13 @@ skills/research/scripts/orchestrator.sh discovery [save-dir]
 skills/research/scripts/orchestrator.sh thema "<Thema-String>" [save-dir]
 skills/research/scripts/orchestrator.sh recommend <topic-id>
 skills/research/scripts/orchestrator.sh evaluation <run-id>
+skills/research/scripts/orchestrator.sh dispatch_pm_anstoss <topic-id> <run-id> <artifact-ref>
 ```
+
+`<artifact-ref>` (S-017 AC2, ADR-009): die Vault-Pfad-Referenz der PM-Artefakte,
+die die aufrufende Session bereits VOR diesem Aufruf über das Skill-Tool per
+pm-skills erzeugt hat — `orchestrator.sh` ruft pm-skills nie selbst auf und
+ermittelt diesen Pfad nie selbst.
 
 Env-Overrides:
 - `RA_DB_PATH` — Pfad zur `research-app.sqlite` (Default: `research-app.sqlite`).
