@@ -2,7 +2,7 @@ id: S-018
 parent: F-005
 title: 'Idempotenz: UNIQUE(topic_id,result_hash) verhindert Doppel-Artefakt, gefahrloser
   Neustart nach Abbruch'
-status: In Progress
+status: Blocked
 priority: P1
 spec: docs/specs/gate-pm-anstoss.md
 implements:
@@ -14,7 +14,7 @@ depends:
 labels: null
 size_est: M
 dispo_est: null
-dispo_act: null
+dispo_act: '4'
 dispo_forecast: null
 estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est
   null, confidence low. Heuristik: n_ac=2 (AC3,AC5) + n_comp=3 (UNIQUE(topic_id,result_hash)
@@ -24,10 +24,11 @@ confidence: low
 tok_est: null
 branch: feat/S-018-idempotenz-unique-topic-id-result-hash-verhindert-doppel-art
 pr: null
-blocked_reason: null
+blocked_reason: Spec unvollständig — /requirement nötig
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-29T22:22:10Z'
+updated_at: '2026-07-29T22:31:59Z'
 done_at: null
 claimed_by: MacBook-Pro-von-Alexander.local-84783-1785363727-13076
 claimed_at: '2026-07-29T22:22:08Z'
+tok: '72682656'
