@@ -15,3 +15,7 @@
 
 # Ephemere Run-Artefakte (Feature-Dossiers, Session-Pläne)
 board/runs/
+
+# Story-Worktrees des deterministischen Runden-Runners (scripts/board-round.sh)
+# — je Story ein eigener, temporärer Working-Tree, keine Projekt-Quelle
+.claude/worktrees/
