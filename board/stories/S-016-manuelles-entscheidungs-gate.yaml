@@ -2,7 +2,7 @@ id: S-016
 parent: F-005
 title: 'Manuelles Gate: PM-Anstoss nach bewertetem Lauf als explizite CLI-/Chat-Wahl,
   nie automatisch'
-status: Blocked
+status: Done
 priority: P1
 spec: docs/specs/gate-pm-anstoss.md
 implements:
@@ -21,12 +21,11 @@ confidence: low
 tok_est: null
 branch: feat/S-016-manuelles-gate-pm-anstoss-nach-bewertetem-lauf-als-explizite
 pr: null
-blocked_reason: 'coder-Handoff uneindeutig — kein ''Review-Handoff: REVIEW REQUIRED''-Marker
-  gefunden (Iteration 1)'
+blocked_reason: null
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-29T14:51:33Z'
-done_at: null
+updated_at: '2026-07-29T20:39:50Z'
+done_at: '2026-07-29T20:39:49Z'
 claimed_by: MacBook-Pro-von-Alexander.local-94352-1785336293-26971
 claimed_at: '2026-07-29T14:44:54Z'
 tok: '93772434'
