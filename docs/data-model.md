@@ -207,7 +207,9 @@ Gesicherte Kanten:
 
 ## 8. Empfehlung ↔ Meilenstein-Kopplung (BR-013)
 
-Die Empfehlung soll **aus dem Meilenstein-Status ableitbar** sein (C-003.2), nicht reiner Judge-Entscheid. Das Modell hält `recommendation` als strukturiertes Feld vor und koppelt es an den Meilensteinstand; Ableitungs-Default (Owner-Entscheid b-2, Hybrid): kein offener eigener Meilenstein u. externe erfüllt/keine → **weiterverfolgen**; ≥1 offener externer Meilenstein → **parken**; explizite Owner-Wahl oder Duplikat/nicht tragfähig → **verwerfen**. Der Owner kann am Gate begründet übersteuern (protokolliert, nie still).
+Die Empfehlung soll **aus dem Meilenstein-Status ableitbar** sein (C-003.2), nicht reiner Judge-Entscheid. Das Modell hält `recommendation` als strukturiertes Feld vor und koppelt es an den Meilensteinstand; Ableitungs-Default (Owner-Entscheid b-2, Hybrid): kein offener externer Meilenstein (unabhängig vom `eigen`-Stand) → **weiterverfolgen**; ≥1 offener externer Meilenstein → **parken**; explizite Owner-Wahl oder Duplikat/nicht tragfähig → **verwerfen**. Der Owner kann am Gate begründet übersteuern (protokolliert, nie still).
+
+**Präzisierung (S-010, AC4):** „eigener Meilenstein" bezieht sich auf `responsibility='eigen'`-Meilensteine (§2.4). Da diese laut Feldbeschreibung **parallel** geschaffen werden und keine Watchlist-Kopplung tragen (§2.4, BR-015), blockiert ein offener `eigen`-Meilenstein die automatische Ableitung allein **nicht** — maßgeblich für die Automatik ist ausschließlich der **externe** Meilenstein-Status: ≥1 offener externer Meilenstein → `parken`, sonst (keine offenen externen Meilensteine, unabhängig vom `eigen`-Stand) → `weiterverfolgen`. `verwerfen` ist **kein** aus dem Meilenstein-Status automatisch ableitbarer Zweig — dieser bleibt der begründeten Owner-/Judge-Entscheidung vorbehalten (Hybrid-Charakter der Regel).
 
 ## 9. SQLite-Umsetzungshinweise für den `coder` (Pack `sql-sqlite.md`)
 

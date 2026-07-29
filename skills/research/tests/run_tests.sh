@@ -24,6 +24,14 @@
 # <run-id>` ist der reachability-Pfad, AC2-Bewertung selbst -- claim_key-
 # Vokabular/E2-Zurueckweisung, UNIQUE/CASCADE -- wird in
 # db_scripts/tests/run_tests.sh getestet, hier NUR die Anzeige-Verdrahtung),
+# AC4 (Empfehlungs-Kopplung, S-010: orchestrator.sh#derive_recommendation --
+# deterministische Ableitung aus dem Meilenstein-Status (data-model.md §8,
+# S-010-Praezisierung): >=1 offener externer Meilenstein -> parken, sonst ->
+# weiterverfolgen (offene 'eigen'-Meilensteine blockieren allein nicht, da
+# parallel geschaffen); 'verwerfen' bleibt der Ableitungsfunktion bewusst
+# nicht zugaenglich (Hybrid, OF-09). print_recommendation_derivation rendert
+# Empfehlung+Begruendung+'verwerfen'-Hinweis; main()-Subbefehl `recommend
+# <topic-id>` ist der Reachability-Pfad, coder/R07),
 # AC5 (Voraussetzungs-Ueberblick, S-011:
 # db_scripts/lib/milestone.sh#create_milestone/list_milestones/
 # set_milestone_status -- Meilenstein-Liste je Thema erzeugen/aktualisieren,
@@ -527,6 +535,77 @@ if RA_LAST30DAYS_CMD="$FAKE_L30D" FAKE_L30D_JSON_FILE="$TEST_DIR/fixtures/thema_
   fi
 else
   bad "research_thema (AC5-E2E) schlug unerwartet fehl: $(cat "$OUT_AC5_E2E" 2>/dev/null)"
+fi
+
+echo "== @trace research-skill#AC4,BR-013 -- derive_recommendation: keine Meilensteine -> weiterverfolgen =="
+DB_AC4="$(new_migrated_db "$TMP/ac4-recommend.sqlite")"
+TOPIC_AC4_NONE="$(create_topic "$DB_AC4" "Thema ohne Meilensteine (AC4)" 2>/dev/null)"
+REC_NONE="$(derive_recommendation "$DB_AC4" "$TOPIC_AC4_NONE" 2>"$TMP/ac4-none.err")"
+if [ "${REC_NONE%%|*}" = "weiterverfolgen" ] && [ -n "${REC_NONE#*|}" ]; then
+  ok "ohne Meilensteine leitet derive_recommendation 'weiterverfolgen' samt Begruendung ab (data-model.md Sec.8)"
+else
+  bad "erwartet 'weiterverfolgen|<Begruendung>', war [$REC_NONE]: $(cat "$TMP/ac4-none.err")"
+fi
+
+echo "== @trace research-skill#AC4,BR-013 -- derive_recommendation: nur 'eigen'-Meilensteine (offen) -> weiterverfolgen (S-010-Praezisierung data-model.md Sec.8) =="
+TOPIC_AC4_EIGEN="$(create_topic "$DB_AC4" "Thema nur eigen offen (AC4)" 2>/dev/null)"
+create_milestone "$DB_AC4" "$TOPIC_AC4_EIGEN" "Eigene Aufgabe offen" "eigen" > /dev/null
+REC_EIGEN="$(derive_recommendation "$DB_AC4" "$TOPIC_AC4_EIGEN" 2>"$TMP/ac4-eigen.err")"
+if [ "${REC_EIGEN%%|*}" = "weiterverfolgen" ]; then
+  ok "ein offener 'eigen'-Meilenstein blockiert die Ableitung allein NICHT -- 'eigen' wird parallel geschaffen, blockiert nicht (§8-Praezisierung)"
+else
+  bad "erwartet 'weiterverfolgen' trotz offenem eigen-Meilenstein, war [$REC_EIGEN]: $(cat "$TMP/ac4-eigen.err")"
+fi
+
+echo "== @trace research-skill#AC4,BR-013,BR-015 -- derive_recommendation: >=1 offener externer Meilenstein -> parken =="
+TOPIC_AC4_EXT="$(create_topic "$DB_AC4" "Thema mit offenem externem MS (AC4)" 2>/dev/null)"
+create_milestone "$DB_AC4" "$TOPIC_AC4_EXT" "Watchlist-Zusage offen" "extern" "watchlist-item-ac4" > /dev/null
+REC_EXT="$(derive_recommendation "$DB_AC4" "$TOPIC_AC4_EXT" 2>"$TMP/ac4-ext.err")"
+if [ "${REC_EXT%%|*}" = "parken" ] && echo "$REC_EXT" | grep -q "1 offene"; then
+  ok "ein offener externer Meilenstein leitet 'parken' samt Begruendung (Anzahl) ab"
+else
+  bad "erwartet 'parken|1 offene(r)...', war [$REC_EXT]: $(cat "$TMP/ac4-ext.err")"
+fi
+
+echo "== @trace research-skill#AC4,BR-013 -- derive_recommendation: externer Meilenstein erfuellt (nicht offen) -> weiterverfolgen =="
+TOPIC_AC4_FULFILLED="$(create_topic "$DB_AC4" "Thema mit erfuelltem externem MS (AC4)" 2>/dev/null)"
+MS_AC4_FULFILLED="$(create_milestone "$DB_AC4" "$TOPIC_AC4_FULFILLED" "Watchlist-Zusage erfuellt" "extern" "watchlist-item-ac4-b")"
+set_milestone_status "$DB_AC4" "$MS_AC4_FULFILLED" "erfuellt" > /dev/null
+REC_FULFILLED="$(derive_recommendation "$DB_AC4" "$TOPIC_AC4_FULFILLED" 2>"$TMP/ac4-fulfilled.err")"
+if [ "${REC_FULFILLED%%|*}" = "weiterverfolgen" ]; then
+  ok "ein erfuellter (nicht offener) externer Meilenstein blockiert die Ableitung nicht -> weiterverfolgen"
+else
+  bad "erwartet 'weiterverfolgen', war [$REC_FULFILLED]: $(cat "$TMP/ac4-fulfilled.err")"
+fi
+
+echo "== @trace research-skill#AC4,security/R03 -- derive_recommendation: ungueltige Themen-ID wird vor SQL-Interpolation abgelehnt =="
+set +e
+REC_INJECT="$(derive_recommendation "$DB_AC4" "x'; DROP TABLE ra_milestone; --" 2>"$TMP/ac4-inject.err")"
+REC_INJECT_RC=$?
+set -e
+STILL_THERE_AC4="$(sqlite3 "$DB_AC4" "SELECT name FROM sqlite_master WHERE type='table' AND name='ra_milestone';")"
+if [ "$REC_INJECT_RC" -ne 0 ] && [ -z "$REC_INJECT" ] && [ "$STILL_THERE_AC4" = "ra_milestone" ]; then
+  ok "manipulierte Themen-ID wird per Format-Check FATAL abgelehnt (delegiert an list_milestones, security/R03)"
+else
+  bad "erwartete Ablehnung, rc=$REC_INJECT_RC out='$REC_INJECT' table='$STILL_THERE_AC4': $(cat "$TMP/ac4-inject.err")"
+fi
+
+echo "== @trace research-skill#AC4 -- print_recommendation_derivation rendert Empfehlung + Begruendung + 'verwerfen'-Hinweis =="
+RENDER_EXT="$(print_recommendation_derivation "$DB_AC4" "$TOPIC_AC4_EXT")"
+if echo "$RENDER_EXT" | grep -q "Empfehlung (Default): parken" \
+  && echo "$RENDER_EXT" | grep -q "^Begruendung:" \
+  && echo "$RENDER_EXT" | grep -qi "verwerfen.*keine automatisch ableitbare Empfehlung"; then
+  ok "print_recommendation_derivation zeigt Default-Empfehlung, Begruendung und den 'verwerfen ist nicht automatisch ableitbar'-Hinweis (Hybrid, OF-09)"
+else
+  bad "unerwartete Ausgabe: $RENDER_EXT"
+fi
+
+echo "== @trace research-skill#AC4 -- main('recommend', <topic-id>) ist ueber die CLI erreichbar (coder/R07, Mount-Reachability) =="
+RECOMMEND_CLI_OUT="$(RA_DB_PATH="$DB_AC4" main recommend "$TOPIC_AC4_EXT")"
+if echo "$RECOMMEND_CLI_OUT" | grep -q "Empfehlung (Default): parken"; then
+  ok "main() dispatcht den 'recommend'-Subbefehl korrekt an print_recommendation_derivation"
+else
+  bad "unerwartete CLI-Ausgabe: $RECOMMEND_CLI_OUT"
 fi
 
 echo "== @trace research-skill#AC2 -- print_swot_summary: leer + gruppiert nach Kategorie =="

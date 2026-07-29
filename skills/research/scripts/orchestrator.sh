@@ -6,24 +6,27 @@
 # (research-skill#AC5, S-011), Bewertungsschicht-Anzeige: SWOT-Zusammenfassung +
 # Empfehlung + Businessplan-Template (research-skill#AC2, S-008).
 #
-# Quelle: docs/specs/research-skill.md AC1/AC2/AC5/AC6/AC7 + Edge-Cases E1/E2/E3.
-# docs/architecture.md "Orchestrator"-Komponente (Einstieg; waehlt Modus, ruft
-# Paesse in Reihenfolge) + "Voraussetzungs-Ueberblick"-Komponente
+# Quelle: docs/specs/research-skill.md AC1/AC2/AC4/AC5/AC6/AC7 + Edge-Cases
+# E1/E2/E3. docs/architecture.md "Orchestrator"-Komponente (Einstieg; waehlt
+# Modus, ruft Paesse in Reihenfolge) + "Voraussetzungs-Ueberblick"-Komponente
 # ("Klaerungspunkte inkl. Schutzrechte, kein Rechtsmodul") + "SWOT-Judge"/
-# "Businessplan-Emitter"-Komponenten. Deep-Research/Empfehlungs-Kopplung
-# (AC3/AC4) sind weiterhin NICHT Teil dieser Datei -- sie folgen erst mit
-# S-009/S-010. Die eigentliche SWOT-Bewertung (Kategorie+claim_key je Claim,
+# "Recommendation"/"Businessplan-Emitter"-Komponenten. Deep-Research (AC3)
+# ist weiterhin NICHT Teil dieser Datei -- sie folgt mit S-009 (separater
+# Scope). Die eigentliche SWOT-Bewertung (Kategorie+claim_key je Claim,
 # create_swot_item) UND die Lauf-Anlage (create_run mit recommendation/
 # has_deep_research/momentum_only) werden -- analog zur Meilenstein-CRUD
 # (S-011) -- vom Skill-Ausfuehrenden (Claude, SKILL.md) waehrend der
-# eigentlichen Recherche aufgerufen, NICHT von diesem Skript selbst berechnet:
-# recommendation ist bewusst KEIN freier Bash-Heuristik-Entscheid dieses
-# Skripts (das wuerde AC4/BR-013 vorwegnehmen, siehe data-model.md §8 -- die
-# deterministische Ableitung aus dem Meilenstein-Status ist S-010-Scope).
+# eigentlichen Recherche aufgerufen, NICHT von diesem Skript selbst berechnet.
+# recommendation ist aber ab S-010 auch KEIN freier Judge-Entscheid mehr:
+# derive_recommendation() bildet den deterministischen Default aus dem
+# Meilenstein-Status (AC4/BR-013, data-model.md §8) -- Claude ruft ihn ueber
+# den `recommend`-Subbefehl VOR create_run auf und weicht nur mit einer im
+# Brief dokumentierten Begruendung ab (Hybrid, OF-09 -- z.B. fuer 'verwerfen',
+# das dieser Funktion bewusst nicht automatisch zugaenglich ist).
 # print_swot_summary/print_recommendation/print_businessplan_template rendern
 # nur den bereits von Claude persistierten Stand eines Laufs (analog
-# print_milestone_overview fuer AC5) -- erreichbar ueber den neuen
-# `evaluation`-Subbefehl (main()).
+# print_milestone_overview fuer AC5) -- erreichbar ueber den `evaluation`-
+# Subbefehl (main()).
 #
 # Boundary-Konformitaet (architecture.md, Review-Blocker): dieses Skript
 # beruehrt SQLite NIE direkt -- jede Themen-/Meilenstein-/Lauf-/SWOT-Anlage/
@@ -169,6 +172,72 @@ print_milestone_overview() {
   fi
 
   echo "Klaerungspunkt Schutzrechte: zu pruefen, kein automatisiertes Rechtsmodul (C-004)."
+  return 0
+}
+
+# derive_recommendation <db-path> <topic-id>
+# AC4/BR-013 (data-model.md §8, Hybrid-Default, S-010-Praezisierung): leitet
+# die Empfehlung deterministisch aus dem aktuellen Meilenstein-Status des
+# Themas ab -- reiner Logik-Pass ueber den bereits von list_milestones
+# gelieferten Stand (keine eigene SQL-Anfrage; architecture.md
+# "Recommendation"-Komponente kennt nur "Lauf-Daten", kein SQLite direkt,
+# Boundary-Regel). Deckt genau die beiden automatisch ableitbaren Zweige der
+# §8-Regel ab:
+#   - >=1 offener EXTERNER Meilenstein -> "parken" (Watchlist-Kopplung
+#     greift, BR-015 -- automatische Wiedervorlage nach Erfuellung/Delta).
+#   - sonst (keine offenen externen Meilensteine -- unabhaengig vom Stand
+#     etwaiger 'eigen'-Meilensteine, die laut §2.4/§8-Praezisierung PARALLEL
+#     geschaffen werden und daher allein nicht blockieren) -> "weiterverfolgen".
+# "verwerfen" (explizite Owner-Wahl / Duplikat / nicht tragfaehig) ist laut
+# §8 KEIN aus dem Meilenstein-Status automatisch ableitbarer Zweig -- dieser
+# Fall bleibt bewusst ausserhalb dieser Funktion (Hybrid: Default hier,
+# begruendete Owner-/Judge-Abweichung bleibt moeglich, AC4 "nicht allein vom
+# Judge entschieden" != "nie vom Judge entschieden").
+# Gibt "<recommendation>|<begruendung>" auf stdout aus (rc=0) oder bricht mit
+# FATAL auf stderr ab (rc=1, delegiert an list_milestones -- z.B. Themen-ID-
+# Formatfehler, security/R03).
+derive_recommendation() {
+  local db="$1"
+  local topic_id="$2"
+  local rows id description responsibility status watch_ref
+  local open_external=0
+
+  rows="$(list_milestones "$db" "$topic_id")" || return 1
+
+  if [ -n "$rows" ]; then
+    while IFS=$'\x1f' read -r id description responsibility status watch_ref; do
+      [ -z "$id" ] && continue
+      if [ "$responsibility" = "extern" ] && [ "$status" = "offen" ]; then
+        open_external=$((open_external + 1))
+      fi
+    done <<< "$rows"
+  fi
+
+  if [ "$open_external" -gt 0 ]; then
+    printf 'parken|%s offene(r) externe(r) Meilenstein(e) -- Wiedervorlage folgt ueber die Watchlist-Kopplung (data-model.md Sec.8, BR-013/BR-015).\n' "$open_external"
+  else
+    printf 'weiterverfolgen|Keine offenen externen Meilensteine -- externe Voraussetzungen erfuellt oder nicht vorhanden (data-model.md Sec.8, BR-013).\n'
+  fi
+  return 0
+}
+
+# print_recommendation_derivation <db-path> <topic-id>
+# AC4: rendert das Ergebnis von derive_recommendation als CLI-Ausgabe --
+# Aufrufpunkt fuer Claude (SKILL.md) VOR compute_result_hash/create_run
+# (Reihenfolge: Meilenstein-Stand -> Empfehlung ableiten -> Hash bilden ->
+# Lauf anlegen). Reine Text-Ausgabe, keine Persistenz.
+print_recommendation_derivation() {
+  local db="$1"
+  local topic_id="$2"
+  local result recommendation begruendung
+
+  result="$(derive_recommendation "$db" "$topic_id")" || return 1
+  IFS='|' read -r recommendation begruendung <<< "$result"
+
+  echo "-- Empfehlungs-Ableitung (AC4/BR-013, data-model.md Sec.8) --"
+  echo "Empfehlung (Default): $recommendation"
+  echo "Begruendung: $begruendung"
+  echo "Hinweis: 'verwerfen' ist keine automatisch ableitbare Empfehlung -- nur bei expliziter Owner-Wahl/Duplikat/nicht tragfaehig abweichen, dann im Brief begruenden (Hybrid, OF-09)."
   return 0
 }
 
@@ -391,6 +460,7 @@ usage() {
 Usage:
   orchestrator.sh discovery [save-dir]
   orchestrator.sh thema "<Thema-String>" [save-dir]
+  orchestrator.sh recommend <topic-id>
   orchestrator.sh evaluation <run-id>
 
 Env:
@@ -410,6 +480,10 @@ main() {
     thema)
       local title="${2:-}"
       research_thema "$RA_DB_PATH" "$title" "${3:-$RA_SAVE_DIR}"
+      ;;
+    recommend)
+      local topic_id="${2:-}"
+      print_recommendation_derivation "$RA_DB_PATH" "$topic_id"
       ;;
     evaluation)
       local run_id="${2:-}"
