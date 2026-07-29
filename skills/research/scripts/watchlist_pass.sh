@@ -21,10 +21,20 @@
 # dann `ra_milestone.status='erfuellt'` (`db_scripts/lib/milestone.sh#
 # set_milestone_status`) UND das Thema `geparkt -> aktiv` (BR-020,
 # `db_scripts/lib/topic.sh#set_topic_status`, siehe
-# `_reactivate_topic_on_delta` unten). Die volle AC4-Markierung "nicht
-# automatisch pruefbarer Meilenstein bleibt sichtbar markiert" bleibt
-# Folge-Story S-015 -- hier gilt fuer den E2-Fall weiterhin nur "last30days-
-# Watchlist nicht erreichbar -> Klartext-Meldung, kein Absturz".
+# `_reactivate_topic_on_delta` unten).
+#
+# AC4-Markierung (S-015, "nicht automatisch pruefbarer Meilenstein bleibt
+# sichtbar als 'manuell zu pruefen' markiert -- keine stille
+# Nicht-Pruefung"): `report_watchlist_result` deckt ALLE Faelle ab, in denen
+# der Watchlist-Pass keinen verwertbaren last30days-Delta-Wert bekommt --
+# last30days-Watchlist fuer den Pass nicht aufloesbar (leerer `cmd`, E2),
+# last30days-Aufruf selbst schlaegt fehl (`fetch_rc<>0`, E2), die Antwort ist
+# trotz `fetch_rc=0` kein gueltiges JSON, oder last30days meldet einen
+# status-Wert ausserhalb von `{ok, insufficient_history}`: jeder dieser Faelle
+# gibt eine Klartext-Zeile mit "manuell zu pruefen" aus und mutiert weder
+# `ra_milestone` noch `ra_topic` (kein Scope-Uebergriff auf AC3). E2 ist damit
+# eine TEILMENGE von AC4 (die reine Nichterreichbarkeits-Variante); AC4 selbst
+# ist umfassender (jede Form von "extern nicht automatisch pruefbar").
 #
 # Idempotenz (NFR): die Reaktivierung selbst mutiert NUR, wenn das Thema noch
 # `geparkt` ist (siehe `_reactivate_topic_on_delta`) -- list_watchlist_candidates

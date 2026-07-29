@@ -30,8 +30,10 @@
 # skills/research/tests/run_tests.sh getestet (list_watchlist_candidates-
 # Filter). AC3 (automatische Wiedervorlage bei Delta/Erfuellung, S-014) ist
 # ausschliesslich in skills/research/tests/run_tests.sh Gegenstand (lebt in
-# watchlist_pass.sh, nicht in dieser Data-Access-Schicht). AC4 dieser Spec
-# bleibt S-015-Folgestory.
+# watchlist_pass.sh, nicht in dieser Data-Access-Schicht). AC4 (nicht
+# pruefbare Meilensteine bleiben sichtbar "manuell zu pruefen" markiert,
+# S-015) ist ebenfalls ausschliesslich in skills/research/tests/run_tests.sh
+# Gegenstand (lebt in watchlist_pass.sh#report_watchlist_result).
 #
 # Covers (research-datenmodell): AC1 (Themen-Anlage, BR-001/BR-002, OF-02),
 # AC2 (Versionierte Laeufe: ra_run, BR-007/BR-008/BR-009/BR-013/BR-014, OF-04,

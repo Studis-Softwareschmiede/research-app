@@ -75,10 +75,17 @@
 # getaggt), AC6 (Nebenlaeufigkeit, S-013: watchlist_pass.sh#run_watchlist_pass
 # erwirbt/gibt ra_topic_lock (holder='watchlist', BR-019) je Themenwechsel
 # frei; ein bereits durch 'research' gesperrtes Thema wird uebersprungen --
-# kein Doppel-Lauf, kein Abbruch des Gesamt-Passes), E2 (last30days-Watchlist
+# kein Doppel-Lauf, kein Abbruch des Gesamt-Passes), AC4 (Nicht pruefbare
+# Meilensteine, S-015: watchlist_pass.sh#report_watchlist_result meldet JEDEN
+# extern nicht automatisch pruefbaren Fall als "manuell zu pruefen" statt ihn
+# still zu uebergehen -- last30days-Watchlist nicht aufloesbar/nicht
+# erreichbar (E2, deckungsgleich mit AC4), last30days-Antwort trotz fetch_rc=0
+# kein gueltiges JSON, last30days meldet einen der Implementierung
+# unbekannten status-Wert; in allen drei Faellen bleibt ra_milestone.status
+# unveraendert -- keine stille Nicht-Pruefung), E2 (last30days-Watchlist
 # nicht erreichbar -> jeder betroffene Meilenstein wird als "manuell zu
-# pruefen" gemeldet, kein Absturz des Passes). AC1/AC4 dieser Spec sind NICHT
-# Gegenstand dieser Story (AC1 ist S-012/Done, AC4 ist S-015-Folgestory).
+# pruefen" gemeldet, kein Absturz des Passes). AC1 dieser Spec ist NICHT
+# Gegenstand dieser Story (S-012/Done).
 #
 # last30days selbst ist in diesem Test-Environment nicht installiert (externe,
 # API-/Netzwerk-abhaengige Installation) -- alle last30days-Aufrufe laufen
@@ -840,7 +847,7 @@ else
   bad "erwartete Ablehnung, rc=$INJECT_CAND_RC out='$INJECT_CAND_OUT' table='$STILL_THERE_CAND': $(cat "$ERR_CAND")"
 fi
 
-echo "== @trace wiedervorlage-meilensteine#AC2,E2 -- report_watchlist_result: last30days-Watchlist nicht verfuegbar (leerer cmd) meldet 'manuell zu pruefen', keine DB-Mutation =="
+echo "== @trace wiedervorlage-meilensteine#AC2,AC4,E2 -- report_watchlist_result: last30days-Watchlist nicht verfuegbar (leerer cmd) meldet 'manuell zu pruefen', keine DB-Mutation =="
 STATUS_BEFORE="$(sqlite3 "$DB_AC2" "SELECT status FROM ra_milestone WHERE id = $MS_OPEN;")"
 REPORT_NOCMD="$(report_watchlist_result "$DB_AC2" "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "" "127" "/dev/null" "/dev/null")"
 STATUS_AFTER="$(sqlite3 "$DB_AC2" "SELECT status FROM ra_milestone WHERE id = $MS_OPEN;")"
@@ -890,7 +897,7 @@ else
   bad "unerwarteter Report: $REPORT_HIST"
 fi
 
-echo "== @trace wiedervorlage-meilensteine#AC2,E2 -- fetch_watchlist_delta+report_watchlist_result: last30days-Watchlist-Aufruf schlaegt fehl -> 'manuell zu pruefen' (kein Crash) =="
+echo "== @trace wiedervorlage-meilensteine#AC2,AC4,E2 -- fetch_watchlist_delta+report_watchlist_result: last30days-Watchlist-Aufruf schlaegt fehl -> 'manuell zu pruefen' (kein Crash) =="
 FETCH_FAIL_LINE="$(FAKE_L30D_WATCHLIST_EXIT_CODE=1 FAKE_L30D_WATCHLIST_STDERR="Netzwerkfehler" \
   fetch_watchlist_delta "$FAKE_L30D_WATCHLIST" "watchlist-item-open")"
 IFS=$'\x1f' read -r FETCH_FAIL_RC FETCH_FAIL_JSON FETCH_FAIL_ERR <<< "$FETCH_FAIL_LINE"
@@ -900,6 +907,34 @@ if echo "$REPORT_FAIL" | grep -qi "manuell zu pruefen" && echo "$REPORT_FAIL" | 
   ok "fehlschlagender last30days-Watchlist-Aufruf wird als 'manuell zu pruefen' reportiert, kein Absturz (E2)"
 else
   bad "unerwarteter Report: $REPORT_FAIL"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC4 -- report_watchlist_result: last30days-Watchlist-Antwort ist trotz fetch_rc=0 kein gueltiges JSON -> 'manuell zu pruefen', keine DB-Mutation =="
+BAD_RESPONSE_FILE="$TMP/ac4-bad-response.json"
+printf 'kein-json' > "$BAD_RESPONSE_FILE"
+STATUS_BEFORE_BADJSON="$(sqlite3 "$DB_AC2" "SELECT status FROM ra_milestone WHERE id = $MS_OPEN;")"
+REPORT_BADJSON="$(report_watchlist_result "$DB_AC2" "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "$FAKE_L30D_WATCHLIST" "0" "$BAD_RESPONSE_FILE" "/dev/null")"
+STATUS_AFTER_BADJSON="$(sqlite3 "$DB_AC2" "SELECT status FROM ra_milestone WHERE id = $MS_OPEN;")"
+if echo "$REPORT_BADJSON" | grep -qi "konnte nicht ausgewertet werden" && echo "$REPORT_BADJSON" | grep -qi "manuell zu pruefen" \
+  && [ "$STATUS_BEFORE_BADJSON" = "$STATUS_AFTER_BADJSON" ]; then
+  ok "nicht auswertbare last30days-Watchlist-Antwort wird als 'manuell zu pruefen' gemeldet, keine stille Nicht-Pruefung, ra_milestone.status unveraendert (AC4)"
+else
+  bad "unerwartetes Ergebnis: report='$REPORT_BADJSON' status_before=$STATUS_BEFORE_BADJSON status_after=$STATUS_AFTER_BADJSON"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC4 -- report_watchlist_result: last30days meldet einen unbekannten status-Wert -> 'manuell zu pruefen', keine DB-Mutation =="
+FETCH_UNKNOWN_LINE="$(FAKE_L30D_WATCHLIST_JSON_FILE="$TEST_DIR/fixtures/watchlist_delta_unknown_status.json" \
+  fetch_watchlist_delta "$FAKE_L30D_WATCHLIST" "watchlist-item-open")"
+IFS=$'\x1f' read -r FETCH_UNKNOWN_RC FETCH_UNKNOWN_JSON FETCH_UNKNOWN_ERR <<< "$FETCH_UNKNOWN_LINE"
+STATUS_BEFORE_UNKNOWN="$(sqlite3 "$DB_AC2" "SELECT status FROM ra_milestone WHERE id = $MS_OPEN;")"
+REPORT_UNKNOWN="$(report_watchlist_result "$DB_AC2" "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "$FAKE_L30D_WATCHLIST" "$FETCH_UNKNOWN_RC" "$FETCH_UNKNOWN_JSON" "$FETCH_UNKNOWN_ERR")"
+rm -f "$FETCH_UNKNOWN_JSON" "$FETCH_UNKNOWN_ERR" 2>/dev/null || true
+STATUS_AFTER_UNKNOWN="$(sqlite3 "$DB_AC2" "SELECT status FROM ra_milestone WHERE id = $MS_OPEN;")"
+if echo "$REPORT_UNKNOWN" | grep -qi "unbekannter last30days-Watchlist-Status" && echo "$REPORT_UNKNOWN" | grep -qi "manuell zu pruefen" \
+  && [ "$STATUS_BEFORE_UNKNOWN" = "$STATUS_AFTER_UNKNOWN" ]; then
+  ok "ein last30days-Watchlist-Status ausserhalb von {ok,insufficient_history} wird als 'manuell zu pruefen' gemeldet statt stillschweigend ignoriert, ra_milestone.status unveraendert (AC4, extern nicht automatisch pruefbar)"
+else
+  bad "unerwartetes Ergebnis: report='$REPORT_UNKNOWN' status_before=$STATUS_BEFORE_UNKNOWN status_after=$STATUS_AFTER_UNKNOWN"
 fi
 
 echo "== @trace wiedervorlage-meilensteine#AC6 -- run_watchlist_pass: ohne Kandidaten meldet Klartext, kein Fehler =="
@@ -941,7 +976,7 @@ else
 fi
 release_topic_lock "$DB_AC6" "$TOPIC_X" "research" > /dev/null
 
-echo "== @trace wiedervorlage-meilensteine#AC2,AC6,E2 -- run_watchlist_pass: last30days-Watchlist nicht erreichbar meldet ALLE Kandidaten als 'manuell zu pruefen', Sperre trotzdem korrekt erworben/freigegeben =="
+echo "== @trace wiedervorlage-meilensteine#AC2,AC4,AC6,E2 -- run_watchlist_pass: last30days-Watchlist nicht erreichbar meldet ALLE Kandidaten als 'manuell zu pruefen', Sperre trotzdem korrekt erworben/freigegeben =="
 DB_AC6_E2="$(new_migrated_db "$TMP/ac6-e2.sqlite")"
 TOPIC_Z="$(create_topic "$DB_AC6_E2" "Thema Z (E2)" 2>/dev/null)"
 MS_Z="$(create_milestone "$DB_AC6_E2" "$TOPIC_Z" "Externer Meilenstein Z" "extern" "watchlist-item-z" 2>/dev/null)"
