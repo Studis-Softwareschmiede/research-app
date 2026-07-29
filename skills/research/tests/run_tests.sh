@@ -57,16 +57,28 @@
 # den Themen-Lock nur waehrend des externen Aufrufs (Minimal-Halte-Prinzip,
 # Reviewer-Fund Iteration 1), report_watchlist_result interpretiert danach
 # lock-frei den bereits eingesammelten last30days-eigenen status/new-Wert fuer
-# den Report-Text, OHNE ra_milestone/ra_topic zu mutieren -- die automatische
-# Wiedervorlage (AC3) und die volle AC4-Markierung sind S-014/S-015-Scope),
-# AC6 (Nebenlaeufigkeit, S-013: watchlist_pass.sh#run_watchlist_pass erwirbt/
-# gibt ra_topic_lock (holder='watchlist', BR-019) je Themenwechsel frei; ein
-# bereits durch 'research' gesperrtes Thema wird uebersprungen -- kein
-# Doppel-Lauf, kein Abbruch des Gesamt-Passes), E2 (last30days-Watchlist nicht
-# erreichbar -> jeder betroffene Meilenstein wird als "manuell zu pruefen"
-# gemeldet, kein Absturz des Passes). AC1/AC3/AC4/AC5 dieser Spec sind NICHT
-# Gegenstand dieser Story (AC1 ist S-012/Done, AC3-AC5 sind
-# S-014/S-015-Folgestories).
+# den Report-Text), AC3 (Automatische Wiedervorlage, S-014:
+# watchlist_pass.sh#_reactivate_topic_on_delta -- wird ein Delta erkannt
+# (status=ok, new>0), setzt report_watchlist_result den geprueften externen
+# Meilenstein auf 'erfuellt' (db_scripts/lib/milestone.sh#set_milestone_status)
+# UND das Thema 'geparkt -> aktiv' (BR-020, db_scripts/lib/topic.sh#
+# set_topic_status), geschuetzt durch eine erneut kurz gehaltene Themen-Sperre
+# (BR-019); mutiert NUR, wenn das Thema noch 'geparkt' ist (Idempotenz-Guard);
+# ist das Thema anderweitig gesperrt, wird die Reaktivierung fuer diesen
+# Durchlauf ausgelassen, kein Crash), AC5 (verworfen bleibt verworfen,
+# S-012/S-014: list_watchlist_candidates filtert strukturell auf
+# t.status='geparkt' -- ein 'verworfen'es Thema kann NIE als Wiedervorlage-
+# Kandidat erscheinen, unabhaengig vom Meilenstein-Stand; die OF-10-Kaskade
+# 'geparkt -> verworfen setzt offene Meilensteine auf hinfaellig' ist bereits
+# in db_scripts/tests/run_tests.sh#"research-datenmodell#AC5,OF-10" getestet
+# -- selbe Codepfad, hier zusaetzlich als wiedervorlage-meilensteine#AC5
+# getaggt), AC6 (Nebenlaeufigkeit, S-013: watchlist_pass.sh#run_watchlist_pass
+# erwirbt/gibt ra_topic_lock (holder='watchlist', BR-019) je Themenwechsel
+# frei; ein bereits durch 'research' gesperrtes Thema wird uebersprungen --
+# kein Doppel-Lauf, kein Abbruch des Gesamt-Passes), E2 (last30days-Watchlist
+# nicht erreichbar -> jeder betroffene Meilenstein wird als "manuell zu
+# pruefen" gemeldet, kein Absturz des Passes). AC1/AC4 dieser Spec sind NICHT
+# Gegenstand dieser Story (AC1 ist S-012/Done, AC4 ist S-015-Folgestory).
 #
 # last30days selbst ist in diesem Test-Environment nicht installiert (externe,
 # API-/Netzwerk-abhaengige Installation) -- alle last30days-Aufrufe laufen
@@ -830,31 +842,35 @@ fi
 
 echo "== @trace wiedervorlage-meilensteine#AC2,E2 -- report_watchlist_result: last30days-Watchlist nicht verfuegbar (leerer cmd) meldet 'manuell zu pruefen', keine DB-Mutation =="
 STATUS_BEFORE="$(sqlite3 "$DB_AC2" "SELECT status FROM ra_milestone WHERE id = $MS_OPEN;")"
-REPORT_NOCMD="$(report_watchlist_result "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "" "127" "/dev/null" "/dev/null")"
+REPORT_NOCMD="$(report_watchlist_result "$DB_AC2" "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "" "127" "/dev/null" "/dev/null")"
 STATUS_AFTER="$(sqlite3 "$DB_AC2" "SELECT status FROM ra_milestone WHERE id = $MS_OPEN;")"
 if echo "$REPORT_NOCMD" | grep -qi "manuell zu pruefen" && echo "$REPORT_NOCMD" | grep -q "E2" && [ "$STATUS_BEFORE" = "$STATUS_AFTER" ]; then
-  ok "ohne aufloesbares last30days-Watchlist-Kommando: Klartext 'manuell zu pruefen' (E2), ra_milestone.status bleibt unveraendert (kein Scope-Uebergriff auf AC3)"
+  ok "ohne aufloesbares last30days-Watchlist-Kommando: Klartext 'manuell zu pruefen' (E2), ra_milestone.status bleibt unveraendert (E2 loest AC3-Reaktivierung nie aus -- kein Delta erkannt)"
 else
   bad "unerwartetes Ergebnis: report='$REPORT_NOCMD' status_before=$STATUS_BEFORE status_after=$STATUS_AFTER"
 fi
 
-echo "== @trace wiedervorlage-meilensteine#AC2 -- fetch_watchlist_delta+report_watchlist_result: last30days meldet Delta (new>0) -> 'Delta erkannt' =="
+echo "== @trace wiedervorlage-meilensteine#AC2,AC3,BR-020 -- fetch_watchlist_delta+report_watchlist_result: last30days meldet Delta (new>0) -> 'Delta erkannt', Meilenstein 'erfuellt', Thema 'geparkt -> aktiv' wiedervorgelegt =="
 FETCH_NEW_LINE="$(FAKE_L30D_WATCHLIST_JSON_FILE="$TEST_DIR/fixtures/watchlist_delta_new.json" \
   fetch_watchlist_delta "$FAKE_L30D_WATCHLIST" "watchlist-item-open")"
 IFS=$'\x1f' read -r FETCH_NEW_RC FETCH_NEW_JSON FETCH_NEW_ERR <<< "$FETCH_NEW_LINE"
-REPORT_NEW="$(report_watchlist_result "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "$FAKE_L30D_WATCHLIST" "$FETCH_NEW_RC" "$FETCH_NEW_JSON" "$FETCH_NEW_ERR")"
+REPORT_NEW="$(report_watchlist_result "$DB_AC2" "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "$FAKE_L30D_WATCHLIST" "$FETCH_NEW_RC" "$FETCH_NEW_JSON" "$FETCH_NEW_ERR")"
 rm -f "$FETCH_NEW_JSON" "$FETCH_NEW_ERR" 2>/dev/null || true
-if echo "$REPORT_NEW" | grep -qi "Delta erkannt" && echo "$REPORT_NEW" | grep -q "3 neue"; then
-  ok "last30days-Signal 'status=ok,new=3' wird als 'Delta erkannt (3 ...)' reportiert (AC2, last30days-Signal 1:1 durchgereicht)"
+MS_OPEN_STATUS_AFTER_DELTA="$(sqlite3 "$DB_AC2" "SELECT status FROM ra_milestone WHERE id = $MS_OPEN;")"
+TOPIC_P_STATUS_AFTER_DELTA="$(sqlite3 "$DB_AC2" "SELECT status FROM ra_topic WHERE id = '$TOPIC_P';")"
+if echo "$REPORT_NEW" | grep -qi "Delta erkannt" && echo "$REPORT_NEW" | grep -q "3 neue" \
+  && echo "$REPORT_NEW" | grep -qi "wiedervorgelegt" \
+  && [ "$MS_OPEN_STATUS_AFTER_DELTA" = "erfuellt" ] && [ "$TOPIC_P_STATUS_AFTER_DELTA" = "aktiv" ]; then
+  ok "last30days-Signal 'status=ok,new=3' wird als 'Delta erkannt (3 ...)' reportiert (AC2, last30days-Signal 1:1 durchgereicht) UND loest die automatische Wiedervorlage aus: Meilenstein 'erfuellt', Thema 'geparkt -> aktiv' (AC3/BR-020)"
 else
-  bad "unerwarteter Report: $REPORT_NEW"
+  bad "unerwarteter Report/Zustand: report='$REPORT_NEW' ms_status=$MS_OPEN_STATUS_AFTER_DELTA topic_status=$TOPIC_P_STATUS_AFTER_DELTA"
 fi
 
 echo "== @trace wiedervorlage-meilensteine#AC2 -- fetch_watchlist_delta+report_watchlist_result: last30days meldet kein Delta (new=0) -> 'kein Delta' =="
 FETCH_NONE_LINE="$(FAKE_L30D_WATCHLIST_JSON_FILE="$TEST_DIR/fixtures/watchlist_delta_none.json" \
   fetch_watchlist_delta "$FAKE_L30D_WATCHLIST" "watchlist-item-open")"
 IFS=$'\x1f' read -r FETCH_NONE_RC FETCH_NONE_JSON FETCH_NONE_ERR <<< "$FETCH_NONE_LINE"
-REPORT_NONE="$(report_watchlist_result "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "$FAKE_L30D_WATCHLIST" "$FETCH_NONE_RC" "$FETCH_NONE_JSON" "$FETCH_NONE_ERR")"
+REPORT_NONE="$(report_watchlist_result "$DB_AC2" "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "$FAKE_L30D_WATCHLIST" "$FETCH_NONE_RC" "$FETCH_NONE_JSON" "$FETCH_NONE_ERR")"
 rm -f "$FETCH_NONE_JSON" "$FETCH_NONE_ERR" 2>/dev/null || true
 if echo "$REPORT_NONE" | grep -qi "kein Delta"; then
   ok "last30days-Signal 'status=ok,new=0' wird als 'kein Delta' reportiert (AC2)"
@@ -866,7 +882,7 @@ echo "== @trace wiedervorlage-meilensteine#AC2 -- fetch_watchlist_delta+report_w
 FETCH_HIST_LINE="$(FAKE_L30D_WATCHLIST_JSON_FILE="$TEST_DIR/fixtures/watchlist_delta_insufficient_history.json" \
   fetch_watchlist_delta "$FAKE_L30D_WATCHLIST" "watchlist-item-open")"
 IFS=$'\x1f' read -r FETCH_HIST_RC FETCH_HIST_JSON FETCH_HIST_ERR <<< "$FETCH_HIST_LINE"
-REPORT_HIST="$(report_watchlist_result "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "$FAKE_L30D_WATCHLIST" "$FETCH_HIST_RC" "$FETCH_HIST_JSON" "$FETCH_HIST_ERR")"
+REPORT_HIST="$(report_watchlist_result "$DB_AC2" "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "$FAKE_L30D_WATCHLIST" "$FETCH_HIST_RC" "$FETCH_HIST_JSON" "$FETCH_HIST_ERR")"
 rm -f "$FETCH_HIST_JSON" "$FETCH_HIST_ERR" 2>/dev/null || true
 if echo "$REPORT_HIST" | grep -qi "keine Vergleichs-Historie"; then
   ok "last30days-Signal 'status=insufficient_history' wird als 'keine Vergleichs-Historie' reportiert (AC2, kein eigenes Delta-Scoring)"
@@ -878,7 +894,7 @@ echo "== @trace wiedervorlage-meilensteine#AC2,E2 -- fetch_watchlist_delta+repor
 FETCH_FAIL_LINE="$(FAKE_L30D_WATCHLIST_EXIT_CODE=1 FAKE_L30D_WATCHLIST_STDERR="Netzwerkfehler" \
   fetch_watchlist_delta "$FAKE_L30D_WATCHLIST" "watchlist-item-open")"
 IFS=$'\x1f' read -r FETCH_FAIL_RC FETCH_FAIL_JSON FETCH_FAIL_ERR <<< "$FETCH_FAIL_LINE"
-REPORT_FAIL="$(report_watchlist_result "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "$FAKE_L30D_WATCHLIST" "$FETCH_FAIL_RC" "$FETCH_FAIL_JSON" "$FETCH_FAIL_ERR")"
+REPORT_FAIL="$(report_watchlist_result "$DB_AC2" "$TOPIC_P" "$MS_OPEN" "watchlist-item-open" "$FAKE_L30D_WATCHLIST" "$FETCH_FAIL_RC" "$FETCH_FAIL_JSON" "$FETCH_FAIL_ERR")"
 rm -f "$FETCH_FAIL_JSON" "$FETCH_FAIL_ERR" 2>/dev/null || true
 if echo "$REPORT_FAIL" | grep -qi "manuell zu pruefen" && echo "$REPORT_FAIL" | grep -q "E2"; then
   ok "fehlschlagender last30days-Watchlist-Aufruf wird als 'manuell zu pruefen' reportiert, kein Absturz (E2)"
@@ -944,20 +960,51 @@ else
   bad "unerwartetes Ergebnis: lock_z_count=$LOCK_Z_COUNT stdout=$(cat "$OUT_AC6_E2") stderr=$(cat "$ERR_AC6_E2")"
 fi
 
-echo "== @trace wiedervorlage-meilensteine#NFR -- run_watchlist_pass ist idempotent: zweiter Lauf auf denselben Stand aendert weder Report noch ra_milestone/ra_topic =="
-MS_Y_STATUS_BEFORE="$(sqlite3 -separator '|' "$DB_AC6" "SELECT status FROM ra_milestone WHERE id = $MS_Y;")"
-TOPIC_Y_STATUS_BEFORE="$(sqlite3 "$DB_AC6" "SELECT status FROM ra_topic WHERE id = '$TOPIC_Y';")"
+echo "== @trace wiedervorlage-meilensteine#AC3,BR-020 -- run_watchlist_pass: Delta (new>0) auf Thema Y wird automatisch wiedervorgelegt (Meilenstein 'erfuellt', Thema 'geparkt -> aktiv') =="
+MS_Y_STATUS_AFTER_RUN1="$(sqlite3 "$DB_AC6" "SELECT status FROM ra_milestone WHERE id = $MS_Y;")"
+TOPIC_Y_STATUS_AFTER_RUN1="$(sqlite3 "$DB_AC6" "SELECT status FROM ra_topic WHERE id = '$TOPIC_Y';")"
+if [ "$MS_Y_STATUS_AFTER_RUN1" = "erfuellt" ] && [ "$TOPIC_Y_STATUS_AFTER_RUN1" = "aktiv" ] \
+  && grep -qi "wiedervorgelegt" "$OUT_AC6"; then
+  ok "der bereits oben (AC6-Lauf) erkannte Delta fuer Thema Y hat automatisch reaktiviert: Meilenstein 'erfuellt', Thema 'geparkt -> aktiv' (AC3/BR-020), sichtbar im Report ('wiedervorgelegt')"
+else
+  bad "erwartete Meilenstein='erfuellt'/Thema='aktiv' + 'wiedervorgelegt' im Report, bekam ms=$MS_Y_STATUS_AFTER_RUN1 topic=$TOPIC_Y_STATUS_AFTER_RUN1 report=$(cat "$OUT_AC6")"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#NFR -- run_watchlist_pass ist idempotent: ein bereits wiedervorgelegtes (jetzt aktives) Thema erscheint in keinem Folgelauf mehr als Kandidat, keine Doppel-Wiedervorlage =="
 OUT_AC6_RUN2="$TMP/ac6_pass_run2.out"
 FAKE_L30D_WATCHLIST_JSON_FILE="$TEST_DIR/fixtures/watchlist_delta_new.json" \
   RA_LAST30DAYS_WATCHLIST_CMD="$FAKE_L30D_WATCHLIST" \
   run_watchlist_pass "$DB_AC6" "$TOPIC_Y" > "$OUT_AC6_RUN2" 2>/dev/null
-MS_Y_STATUS_AFTER="$(sqlite3 -separator '|' "$DB_AC6" "SELECT status FROM ra_milestone WHERE id = $MS_Y;")"
-TOPIC_Y_STATUS_AFTER="$(sqlite3 "$DB_AC6" "SELECT status FROM ra_topic WHERE id = '$TOPIC_Y';")"
-if grep -qF "Meilenstein $MS_Y (Thema $TOPIC_Y" "$OUT_AC6_RUN2" && grep -qi "Delta erkannt" "$OUT_AC6_RUN2" \
-  && [ "$MS_Y_STATUS_BEFORE" = "$MS_Y_STATUS_AFTER" ] && [ "$TOPIC_Y_STATUS_BEFORE" = "$TOPIC_Y_STATUS_AFTER" ]; then
-  ok "wiederholte Pruefung desselben Stands liefert denselben Report und mutiert weder ra_milestone.status noch ra_topic.status (NFR Idempotenz -- reiner Lese-/Report-Pfad, keine Doppel-Wirkung moeglich)"
+MS_Y_STATUS_AFTER_RUN2="$(sqlite3 "$DB_AC6" "SELECT status FROM ra_milestone WHERE id = $MS_Y;")"
+TOPIC_Y_STATUS_AFTER_RUN2="$(sqlite3 "$DB_AC6" "SELECT status FROM ra_topic WHERE id = '$TOPIC_Y';")"
+if grep -qi "Keine offenen externen Meilensteine" "$OUT_AC6_RUN2" \
+  && [ "$MS_Y_STATUS_AFTER_RUN2" = "$MS_Y_STATUS_AFTER_RUN1" ] && [ "$TOPIC_Y_STATUS_AFTER_RUN2" = "$TOPIC_Y_STATUS_AFTER_RUN1" ]; then
+  ok "zweiter Lauf auf dasselbe (jetzt aktive) Thema findet keinen Kandidaten mehr (Filter t.status='geparkt') -- keine Doppel-Wiedervorlage, ra_milestone/ra_topic unveraendert (NFR Idempotenz)"
 else
-  bad "unerwartetes Ergebnis: ms_before=$MS_Y_STATUS_BEFORE ms_after=$MS_Y_STATUS_AFTER topic_before=$TOPIC_Y_STATUS_BEFORE topic_after=$TOPIC_Y_STATUS_AFTER out=$(cat "$OUT_AC6_RUN2")"
+  bad "unerwartetes Ergebnis: ms_after1=$MS_Y_STATUS_AFTER_RUN1 ms_after2=$MS_Y_STATUS_AFTER_RUN2 topic_after1=$TOPIC_Y_STATUS_AFTER_RUN1 topic_after2=$TOPIC_Y_STATUS_AFTER_RUN2 out=$(cat "$OUT_AC6_RUN2")"
+fi
+
+echo "== @trace wiedervorlage-meilensteine#AC5,BR-005,BR-020 -- list_watchlist_candidates/run_watchlist_pass schliessen ein 'verworfen'es Thema strukturell aus -- nie Wiedervorlage, selbst wenn ein externer Meilenstein (zurueckgesetzt) 'offen' waere =="
+DB_AC5="$(new_migrated_db "$TMP/ac5-discarded.sqlite")"
+TOPIC_DISCARDED="$(create_topic "$DB_AC5" "Verworfenes Thema AC5" 2>/dev/null)"
+MS_DISCARDED="$(create_milestone "$DB_AC5" "$TOPIC_DISCARDED" "Externer Meilenstein (wird verworfen)" "extern" "watchlist-item-discarded" 2>/dev/null)"
+set_topic_status "$DB_AC5" "$TOPIC_DISCARDED" "geparkt" > /dev/null
+set_topic_status "$DB_AC5" "$TOPIC_DISCARDED" "verworfen" > /dev/null
+# OF-10 hat den Meilenstein beim Verwerfen bereits auf 'hinfaellig' gesetzt
+# (getestet in db_scripts/tests/run_tests.sh#"research-datenmodell#AC5,OF-10")
+# -- hier zusaetzlich defensiv zurueck auf 'offen' gesetzt, um AC5 UNABHAENGIG
+# von der OF-10-Kaskade zu belegen: der Ausschluss greift bereits allein ueber
+# t.status='geparkt' in list_watchlist_candidates, nicht erst ueber den
+# Meilenstein-Status.
+set_milestone_status "$DB_AC5" "$MS_DISCARDED" "offen" > /dev/null
+CANDIDATES_DISCARDED="$(list_watchlist_candidates "$DB_AC5")"
+OUT_AC5="$(RA_LAST30DAYS_WATCHLIST_CMD="$FAKE_L30D_WATCHLIST" run_watchlist_pass "$DB_AC5" 2>/dev/null)"
+TOPIC_DISCARDED_STATUS="$(sqlite3 "$DB_AC5" "SELECT status FROM ra_topic WHERE id = '$TOPIC_DISCARDED';")"
+if [ -z "$CANDIDATES_DISCARDED" ] && echo "$OUT_AC5" | grep -qi "Keine offenen externen Meilensteine" \
+  && [ "$TOPIC_DISCARDED_STATUS" = "verworfen" ]; then
+  ok "ein 'verworfen'es Thema wird NIE als Watchlist-Kandidat gefuehrt/wiedervorgelegt -- ein (zurueckgesetzter) offener externer Meilenstein aendert daran nichts (AC5/BR-005/BR-020)"
+else
+  bad "erwartete leere Kandidatenliste + unveraendertes 'verworfen', bekam candidates='$CANDIDATES_DISCARDED' status=$TOPIC_DISCARDED_STATUS out=$OUT_AC5"
 fi
 
 

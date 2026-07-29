@@ -10,21 +10,29 @@
 # E2 ("last30days-Watchlist nicht verfuegbar -> externe Meilensteine werden
 # als 'manuell zu pruefen' gemeldet, kein Crash").
 #
-# SCOPE (S-013, NUR AC2+AC6): dieser Pass ENDET beim GEPRUEFTEN Delta-/
-# Erfuellungs-Signal je externem Meilenstein -- er AENDERT WEDER
-# ra_milestone.status NOCH ra_topic.status. Die automatische Wiedervorlage
-# (geparkt -> aktiv bei erfuelltem Meilenstein/Delta, AC3) und die volle
-# AC4-Markierung "nicht automatisch pruefbarer Meilenstein bleibt sichtbar
-# markiert" sind Folge-Stories (S-014/S-015) -- hier gilt nur die
-# E2-Teilmenge "last30days-Watchlist nicht erreichbar -> Klartext-Meldung,
-# kein Absturz". Kein eigenes Delta-Scoring (Nicht-Ziel): das last30days-
-# eigene Delta-Ergebnis (status/new aus watchlist_client.sh#check_watchlist_delta)
-# wird nur reportiert, nicht neu bewertet.
+# SCOPE (S-013, AC2+AC6; erweitert um S-014, AC3+AC5): der last30days-
+# Watchlist-Aufruf selbst bleibt reiner Lese-/Report-Pfad -- der last30days-
+# eigene Delta-Wert (status/new aus watchlist_client.sh#check_watchlist_delta)
+# wird 1:1 reportiert, nicht neu bewertet (kein eigenes Delta-Scoring,
+# Nicht-Ziel). Wird dabei ein Delta erkannt (status=ok, new>0), gilt der
+# geprüfte externe Meilenstein als erfüllt (OF-12: "Delta" ist bewusst KEIN
+# eigener Schwellwert-Mechanismus neben der Meilenstein-Erfüllung, sondern
+# DAS last30days-Signal, das sie auslöst) -- die Data-Access-Schicht setzt
+# dann `ra_milestone.status='erfuellt'` (`db_scripts/lib/milestone.sh#
+# set_milestone_status`) UND das Thema `geparkt -> aktiv` (BR-020,
+# `db_scripts/lib/topic.sh#set_topic_status`, siehe
+# `_reactivate_topic_on_delta` unten). Die volle AC4-Markierung "nicht
+# automatisch pruefbarer Meilenstein bleibt sichtbar markiert" bleibt
+# Folge-Story S-015 -- hier gilt fuer den E2-Fall weiterhin nur "last30days-
+# Watchlist nicht erreichbar -> Klartext-Meldung, kein Absturz".
 #
-# Idempotenz (NFR): dieser Pass mutiert NICHTS (reiner Lese-/Report-Pfad) --
-# mehrfaches Ausfuehren gegen denselben Stand erzeugt daher strukturell keine
-# Doppel-Wirkung (kein Schreibzugriff, den ein zweiter Lauf verdoppeln
-# koennte).
+# Idempotenz (NFR): die Reaktivierung selbst mutiert NUR, wenn das Thema noch
+# `geparkt` ist (siehe `_reactivate_topic_on_delta`) -- list_watchlist_candidates
+# liefert ein bereits reaktiviertes (jetzt `aktiv`es) Thema in keinem
+# folgenden Lauf mehr als Kandidat (Filter `t.status='geparkt'`,
+# `db_scripts/lib/milestone.sh#list_watchlist_candidates`), daher erzeugt
+# mehrfaches Ausfuehren gegen denselben Stand strukturell keine
+# Doppel-Wiedervorlage.
 #
 # Kein eigener Scheduler (Nicht-Ziel, C-002): dieses Skript ist ein
 # eigenstaendiger Einstiegspunkt (analog orchestrator.sh/db_scripts/migrate.sh)
@@ -33,12 +41,13 @@
 # watchlist.py run-all wird ebenfalls extern angestossen).
 #
 # Boundary-Konformitaet (architecture.md, Review-Blocker): dieses Skript
-# beruehrt SQLite NIE direkt -- jede Meilenstein-/Sperren-Abfrage laeuft
-# ausschliesslich ueber db_scripts/lib/milestone.sh (list_watchlist_candidates)
-# und db_scripts/lib/topic_lock.sh (acquire_topic_lock/release_topic_lock).
-# last30days wird ausschliesslich ueber lib/watchlist_client.sh aufgerufen
-# (Watchlist-Pass ist neben Discovery/Ingest die einzige last30days-Aufruferin,
-# Boundary 2).
+# beruehrt SQLite NIE direkt -- jede Meilenstein-/Themen-/Sperren-Mutation
+# laeuft ausschliesslich ueber db_scripts/lib/milestone.sh
+# (list_watchlist_candidates, set_milestone_status), db_scripts/lib/topic.sh
+# (set_topic_status, S-014) und db_scripts/lib/topic_lock.sh
+# (acquire_topic_lock/release_topic_lock). last30days wird ausschliesslich
+# ueber lib/watchlist_client.sh aufgerufen (Watchlist-Pass ist neben
+# Discovery/Ingest die einzige last30days-Aufruferin, Boundary 2).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,6 +58,8 @@ source "$SCRIPT_DIR/lib/watchlist_client.sh"
 source "$REPO_ROOT/db_scripts/lib/topic_lock.sh"
 # shellcheck source=../../../db_scripts/lib/milestone.sh
 source "$REPO_ROOT/db_scripts/lib/milestone.sh"
+# shellcheck source=../../../db_scripts/lib/topic.sh
+source "$REPO_ROOT/db_scripts/lib/topic.sh"
 
 RA_DB_PATH="${RA_DB_PATH:-research-app.sqlite}"
 RA_LOCK_TTL_SECONDS="${RA_LOCK_TTL_SECONDS:-1800}"
@@ -92,24 +103,103 @@ fetch_watchlist_delta() {
   return 0
 }
 
-# report_watchlist_result <topic-id> <milestone-id> <watch-ref> <cmd-or-empty>
-#                          <fetch-rc> <json-file> <err-file>
+# _reactivate_topic_on_delta <db> <topic-id> <milestone-id>
+# AC3 (wiedervorlage-meilensteine): setzt den erkannten externen Meilenstein
+# auf 'erfuellt' und das Thema von 'geparkt' auf 'aktiv' (Wiedervorlage,
+# BR-020) -- geschuetzt durch die Themen-Sperre (BR-019), analog zum
+# externen last30days-Aufruf oben (Minimal-Halte-Prinzip: die Sperre wird
+# NUR waehrend der eigentlichen Schreiboperation gehalten, nicht waehrend der
+# vorausgehenden JSON-Auswertung).
+#
+# Idempotent (NFR): mutiert NUR, wenn das Thema zu diesem Zeitpunkt noch
+# 'geparkt' ist -- ein bereits wiedervorgelegtes (aktives) Thema erscheint
+# ohnehin in keinem folgenden list_watchlist_candidates-Ergebnis mehr
+# (Filter t.status='geparkt'), dieser Check ist die zusaetzliche Absicherung
+# fuer direkte/wiederholte Aufrufe innerhalb desselben Durchlaufs.
+#
+# Ist das Thema gerade durch einen anderen Lauf gesperrt (z.B. ein manueller
+# /research-Lauf), wird die Reaktivierung fuer DIESEN Durchlauf ausgelassen
+# (kein Doppel-Lauf, BR-019) -- der naechste Watchlist-Pass holt nach (E1).
+#
+# rc=0 gdw. die Reaktivierung tatsaechlich durchgefuehrt wurde, sonst rc=1
+# (kein eigener Fehlerfall -- entscheidet nur den Report-Text des Aufrufers).
+_reactivate_topic_on_delta() {
+  local db="$1"
+  local topic_id="$2"
+  local milestone_id="$3"
+  local current_status lock_rc ms_rc topic_rc
+
+  # UUID-Format-Guard VOR jeder SQL-Interpolation (security/R03, unconditional
+  # -- auch wenn topic_id aus der vertrauenswuerdigen list_watchlist_candidates
+  # stammt, siehe .claude/lessons/coder.md, Reviewer-Fund Iteration 2 S-014),
+  # analog topic.sh#set_topic_status/milestone.sh#create_milestone|list_milestones|
+  # list_watchlist_candidates.
+  if ! [[ "$topic_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+    echo "FATAL: Themen-ID '$topic_id' verletzt das UUID-Format -- Reaktivierung abgelehnt vor jeder SQL-Interpolation (security/R03)." >&2
+    return 1
+  fi
+
+  current_status="$(sqlite3 "$db" "SELECT status FROM ra_topic WHERE id = '$topic_id';" 2>/dev/null)"
+  if [ "$current_status" != "geparkt" ]; then
+    return 1
+  fi
+
+  set +e
+  acquire_topic_lock "$db" "$topic_id" "$WATCHLIST_LOCK_HOLDER" "$RA_LOCK_TTL_SECONDS"
+  lock_rc=$?
+  set -e
+  if [ "$lock_rc" -ne 0 ]; then
+    echo "UEBERSPRUNGEN: Thema $topic_id ist gerade in Bearbeitung (BR-019) -- Wiedervorlage (AC3) fuer diesen Durchlauf ausgelassen, naechster Watchlist-Pass holt nach." >&2
+    return 1
+  fi
+
+  # Zweiter, GESPERRTER Status-Check unmittelbar vor der ersten Schreiboperation
+  # (Reviewer-Fund Iteration 2, S-014): der Vorab-Check oben lief VOR dem Lock
+  # und ist deshalb selbst kein Schutz gegen einen nebenlaeufigen Statuswechsel
+  # (TOCTOU) -- ohne diesen Re-Check koennte set_milestone_status das
+  # 'erfuellt' bereits schreiben, bevor der (an sich geschuetzte) Statuswechsel
+  # des Themas ueberhaupt versucht wird; schlaegt dieser dann fehl (Thema
+  # zwischenzeitlich z.B. 'verworfen'), bliebe der Meilenstein dauerhaft
+  # 'erfuellt', ohne dass das Thema je reaktiviert wurde -- Widerspruch zu
+  # E1 ("kein Meilenstein geht verloren").
+  current_status="$(sqlite3 "$db" "SELECT status FROM ra_topic WHERE id = '$topic_id';" 2>/dev/null)"
+  if [ "$current_status" != "geparkt" ]; then
+    release_topic_lock "$db" "$topic_id" "$WATCHLIST_LOCK_HOLDER" || true
+    return 1
+  fi
+
+  set +e
+  set_milestone_status "$db" "$milestone_id" "erfuellt" 2>/dev/null
+  ms_rc=$?
+  set_topic_status "$db" "$topic_id" "aktiv" 2>/dev/null
+  topic_rc=$?
+  set -e
+  release_topic_lock "$db" "$topic_id" "$WATCHLIST_LOCK_HOLDER" || true
+
+  [ "$ms_rc" -eq 0 ] && [ "$topic_rc" -eq 0 ]
+}
+
+# report_watchlist_result <db> <topic-id> <milestone-id> <watch-ref>
+#                          <cmd-or-empty> <fetch-rc> <json-file> <err-file>
 # Interpretiert ein BEREITS eingesammeltes last30days-Watchlist-Ergebnis (die
 # Themen-Sperre ist zu diesem Zeitpunkt laengst wieder frei, siehe
-# run_watchlist_pass) und gibt eine Klartext-Report-Zeile auf stdout aus --
-# KEINE Statusaenderung (Scope-Grenze S-013, siehe Datei-Header). Reine lokale
-# Verarbeitung (JSON-Parsing ueber sqlite3 ':memory:', beide Extraktionen
-# zusaetzlich defensiv per set+e/-e gekapselt, Reviewer-Fund Iteration 1) --
-# kann NIE mehr zu einer haengenden Sperre fuehren, selbst wenn ein Schritt
-# hier fehlschlaegt. rc ist immer 0.
+# run_watchlist_pass) und gibt eine Klartext-Report-Zeile auf stdout aus.
+# Reine lokale Verarbeitung (JSON-Parsing ueber sqlite3 ':memory:', beide
+# Extraktionen zusaetzlich defensiv per set+e/-e gekapselt, Reviewer-Fund
+# Iteration 1 S-013) -- kann NIE mehr zu einer haengenden Sperre fuehren,
+# selbst wenn ein Schritt hier fehlschlaegt. Wird ein Delta erkannt (status=ok,
+# new>0), loest diese Funktion zusaetzlich die AC3-Reaktivierung aus
+# (_reactivate_topic_on_delta, holt sich die Themen-Sperre dafuer selbst
+# erneut). rc ist immer 0.
 report_watchlist_result() {
-  local topic_id="$1"
-  local milestone_id="$2"
-  local watch_ref="$3"
-  local cmd="$4"
-  local fetch_rc="$5"
-  local json_file="$6"
-  local err_file="$7"
+  local db="$1"
+  local topic_id="$2"
+  local milestone_id="$3"
+  local watch_ref="$4"
+  local cmd="$5"
+  local fetch_rc="$6"
+  local json_file="$7"
+  local err_file="$8"
   local status new_count escaped_path status_rc new_count_rc
 
   if [ -z "$cmd" ]; then
@@ -138,7 +228,11 @@ report_watchlist_result() {
   case "$status" in
     ok)
       if [ "${new_count:-0}" -gt 0 ] 2>/dev/null; then
-        echo "Meilenstein $milestone_id (Thema $topic_id, Watchlist-Ref '$watch_ref'): Delta erkannt ($new_count neue(r) Fund(e), last30days-Signal)."
+        if _reactivate_topic_on_delta "$db" "$topic_id" "$milestone_id"; then
+          echo "Meilenstein $milestone_id (Thema $topic_id, Watchlist-Ref '$watch_ref'): Delta erkannt ($new_count neue(r) Fund(e), last30days-Signal) -- Meilenstein auf 'erfuellt' gesetzt, Thema wiedervorgelegt (geparkt -> aktiv, AC3/BR-020)."
+        else
+          echo "Meilenstein $milestone_id (Thema $topic_id, Watchlist-Ref '$watch_ref'): Delta erkannt ($new_count neue(r) Fund(e), last30days-Signal)."
+        fi
       else
         echo "Meilenstein $milestone_id (Thema $topic_id, Watchlist-Ref '$watch_ref'): kein Delta (last30days meldet 0 neue Funde)."
       fi
@@ -165,7 +259,11 @@ report_watchlist_result() {
 # manueller /research-Lauf ist in Bearbeitung), wird DIESER Meilenstein fuer
 # diesen Durchlauf uebersprungen (Klartext-Hinweis auf stderr), kein
 # Doppel-Lauf, kein Abbruch des gesamten Passes (analog
-# research_discovery#E3 in orchestrator.sh).
+# research_discovery#E3 in orchestrator.sh). AC3: erkennt report_watchlist_result
+# ein Delta, wird das Thema automatisch wiedervorgelegt (geparkt -> aktiv,
+# siehe _reactivate_topic_on_delta) -- da list_watchlist_candidates nur
+# 'geparkt'e Themen liefert (AC5), scheidet ein bereits 'verworfen'es Thema
+# fuer diese Reaktivierung strukturell aus (nie Wiedervorlage, BR-005/BR-020).
 run_watchlist_pass() {
   local db="$1"
   local topic_filter="${2:-}"
@@ -209,7 +307,7 @@ run_watchlist_pass() {
 
     IFS=$'\x1f' read -r fetch_rc fetch_json fetch_err <<< "$fetch_line"
 
-    report_watchlist_result "$topic_id" "$milestone_id" "$watch_ref" "$cmd" "$fetch_rc" "$fetch_json" "$fetch_err"
+    report_watchlist_result "$db" "$topic_id" "$milestone_id" "$watch_ref" "$cmd" "$fetch_rc" "$fetch_json" "$fetch_err"
     rm -f "$fetch_json" "$fetch_err" 2>/dev/null || true
   done <<< "$rows"
 

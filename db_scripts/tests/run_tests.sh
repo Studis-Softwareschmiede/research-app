@@ -21,10 +21,17 @@
 # skills/research/tests/run_tests.sh (dort eigener "Covers
 # (wiedervorlage-meilensteine)"-Block, gleiches Muster wie milestone.sh#
 # create_milestone/list_milestones/set_milestone_status, die ebenfalls NICHT
-# hier, sondern dort getestet werden). AC3-AC5 dieser Spec sind weiterhin NICHT
-# Gegenstand dieser Datei (automatische Wiedervorlage/volle
-# "manuell zu pruefen"-Markierung/Verwerfen-Kaskade der Watchlist selbst sind
-# S-014/S-015-Folgestories).
+# hier, sondern dort getestet werden). AC5 (verworfen bleibt verworfen, OF-10-
+# Kaskade "geparkt -> verworfen setzt offene Meilensteine auf 'hinfaellig'")
+# ist HIER als Teil des ra_topic-Zustandsautomaten getestet (siehe "Covers
+# (research-datenmodell): AC5" unten, gleicher Testfall, seit S-014
+# zusaetzlich als wiedervorlage-meilensteine#AC5 getaggt); die strukturelle
+# Ausschluss-Garantie "verworfen erscheint nie als Watchlist-Kandidat" ist in
+# skills/research/tests/run_tests.sh getestet (list_watchlist_candidates-
+# Filter). AC3 (automatische Wiedervorlage bei Delta/Erfuellung, S-014) ist
+# ausschliesslich in skills/research/tests/run_tests.sh Gegenstand (lebt in
+# watchlist_pass.sh, nicht in dieser Data-Access-Schicht). AC4 dieser Spec
+# bleibt S-015-Folgestory.
 #
 # Covers (research-datenmodell): AC1 (Themen-Anlage, BR-001/BR-002, OF-02),
 # AC2 (Versionierte Laeufe: ra_run, BR-007/BR-008/BR-009/BR-013/BR-014, OF-04,
@@ -537,7 +544,7 @@ else
   bad "nicht existierendes Thema haette abgelehnt werden muessen, rc=$UNKNOWN_RC: $(cat "$TMP/unknown.err")"
 fi
 
-echo "== @trace research-datenmodell#AC5,OF-10 -- geparkt -> verworfen setzt offene Meilensteine auf 'hinfaellig' =="
+echo "== @trace research-datenmodell#AC5,OF-10,wiedervorlage-meilensteine#AC5 -- geparkt -> verworfen setzt offene Meilensteine auf 'hinfaellig' =="
 TID_E="$(create_topic "$TOPIC_DB" "Fuenftes Thema")"
 # 'Offener Meilenstein' ist bewusst 'extern' (statt 'eigen'): seit S-012 verlangt das
 # BR-004-Gate mindestens einen EXTERNEN Meilenstein zum Parken (AC1); die OF-10-
