@@ -1,0 +1,20 @@
+# Push-getriggerter Secret-Scan (Companion zu security.yml, s. dessen Kommentar).
+# research-app ist aktuell language: md, deploy: none (Stack bewusst offen, s. Profil) —
+# darum ohne Image-Build/ghcr-Push (kein Dockerfile, kein Rollout-Ziel) und ohne
+# paths-ignore (die Story-Arbeit findet aktuell fast ausschliesslich in docs/board statt;
+# ein Ausschluss dieser Pfade liesse den Workflow faktisch nie laufen). Sobald
+# der Stack feststeht (architekt/adopt-Re-Run), ersetzt die volle Vorlage
+# (templates/_shared/build.yml) diese Datei inkl. Image-Job + paths-ignore.
+name: build
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Secret-Scan (gitleaks)
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest detect --source=/repo --no-git --redact -v
