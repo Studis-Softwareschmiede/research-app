@@ -2,7 +2,7 @@ id: S-019
 parent: F-005
 title: 'Divergenz-Ausweis: bei veraendertem Stand PM-Ergebnisse aktualisieren und
   Divergenz zum Vorlauf ausweisen'
-status: Blocked
+status: Done
 priority: P1
 spec: docs/specs/gate-pm-anstoss.md
 implements:
@@ -22,11 +22,11 @@ confidence: low
 tok_est: null
 branch: feat/S-019-divergenz-ausweis-bei-veraendertem-stand-pm-ergebnisse-aktua
 pr: null
-blocked_reason: Gate-Text uneindeutig — manuelle Klärung nötig
+blocked_reason: null
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-29T23:20:08Z'
-done_at: null
+updated_at: '2026-07-29T23:56:09Z'
+done_at: '2026-07-29T23:56:09Z'
 claimed_by: MacBook-Pro-von-Alexander.local-28417-1785365705-14830
 claimed_at: '2026-07-29T22:55:05Z'
 tok: '19496376'
