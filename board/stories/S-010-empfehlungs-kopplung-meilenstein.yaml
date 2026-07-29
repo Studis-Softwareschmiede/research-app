@@ -1,7 +1,8 @@
 id: S-010
 parent: F-003
-title: 'Empfehlungs-Kopplung: Empfehlung aus Meilenstein-Status abgeleitet und begruendet (nicht nur Judge)'
-status: To Do
+title: 'Empfehlungs-Kopplung: Empfehlung aus Meilenstein-Status abgeleitet und begruendet
+  (nicht nur Judge)'
+status: In Progress
 priority: P1
 spec: docs/specs/research-skill.md
 implements:
@@ -14,13 +15,17 @@ size_est: S
 dispo_est: null
 dispo_act: null
 dispo_forecast: null
-estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est null, confidence low. Heuristik: n_ac=1 (AC4) + n_comp=2 (Ableitungsregel Meilenstein-Status->Empfehlung data-model 8, Begruendungs-Ausweis) = Score 3 -> S.'
+estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est
+  null, confidence low. Heuristik: n_ac=1 (AC4) + n_comp=2 (Ableitungsregel Meilenstein-Status->Empfehlung
+  data-model 8, Begruendungs-Ausweis) = Score 3 -> S.'
 confidence: low
 tok_est: null
-branch: null
+branch: feat/S-010-empfehlungs-kopplung-empfehlung-aus-meilenstein-status-abgel
 pr: null
 blocked_reason: null
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-29T07:00:28Z'
 done_at: null
+claimed_by: MacBook-Pro-von-Alexander.local-21123-1785308426-23753
+claimed_at: '2026-07-29T07:00:27Z'
