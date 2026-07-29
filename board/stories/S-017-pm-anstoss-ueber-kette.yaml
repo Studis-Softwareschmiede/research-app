@@ -2,7 +2,7 @@ id: S-017
 parent: F-005
 title: 'PM-Anstoss ueber die Kette: pm-skills -> Vault-Artefakte -> pm-import, Statuswechsel
   aktiv->im_pm->aktiv'
-status: In Progress
+status: Blocked
 priority: P1
 spec: docs/specs/gate-pm-anstoss.md
 implements:
@@ -12,7 +12,7 @@ depends:
 labels: null
 size_est: M
 dispo_est: null
-dispo_act: null
+dispo_act: '4'
 dispo_forecast: null
 estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est
   null, confidence low. Heuristik: n_ac=1 (AC2) + n_comp=4 (pm-skills-Anstoss, Vault-Artefakt-Ablage,
@@ -22,10 +22,11 @@ confidence: low
 tok_est: null
 branch: feat/S-017-pm-anstoss-ueber-die-kette-pm-skills-vault-artefakte-pm-impo
 pr: null
-blocked_reason: null
+blocked_reason: Spec unvollständig — /requirement nötig
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-29T21:08:47Z'
+updated_at: '2026-07-29T21:43:54Z'
 done_at: null
 claimed_by: MacBook-Pro-von-Alexander.local-90793-1785359325-24283
 claimed_at: '2026-07-29T21:08:46Z'
+tok: '134202832'
