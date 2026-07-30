@@ -39,12 +39,12 @@
 // Tests selbst — der Browser-Code bleibt klassisches Script, s.
 // app/assets/app.js), AC3 (Klickbare/kopierbare Gates — Gate-Bereich
 // erscheint im Thema-Detail nur, wenn der neueste Lauf 'weiterverfolgen'
-// empfiehlt [Thema/Lauf-ID vorausgefüllt im `orchestrator.sh
-// dispatch_pm_anstoss`-Befehl, `<artifact-ref>`-Platzhalter unverändert],
-// bleibt aus bei anderer Empfehlung [parken], Kopieren-Button bestätigt den
+// empfiehlt [Chat-Auftragstext mit Themen-Titel + Themen-/Lauf-ID
+// vorausgefüllt, KEIN Terminal-/Shell-Befehl — ADR-011/ADR-009], bleibt aus
+// bei anderer Empfehlung [parken], Kopieren-Button bestätigt den
 // Kopiervorgang ohne selbst zu schreiben, E2 — aktiver `ra_topic_lock` zeigt
-// „Lauf läuft"-Hinweis statt Befehl, ein abgelaufener Lock blockiert das
-// Gate nicht).
+// „Lauf läuft"-Hinweis statt Auftragstext, ein abgelaufener Lock blockiert
+// das Gate nicht).
 
 import { spawn, execFileSync } from "node:child_process";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
@@ -409,8 +409,8 @@ async function main() {
     );
     check(
       "AC3",
-      "Gate-Befehl erscheint, wenn der neueste Lauf 'weiterverfolgen' empfiehlt, mit Themen-/Lauf-ID vorausgefüllt",
-      gateCommand === "skills/research/scripts/orchestrator.sh dispatch_pm_anstoss h1 2 <artifact-ref>"
+      "Chat-Auftragstext erscheint, wenn der neueste Lauf 'weiterverfolgen' empfiehlt, mit Themen-Titel/-ID + Lauf-ID vorausgefüllt (kein Terminal-Befehl)",
+      gateCommand === 'PM-Anstoss für Thema "Verlaufs-Thema" (Themen-ID h1, Lauf 2) bitte jetzt durchführen.'
     );
 
     const gateCopyResult = await evalExpr(
@@ -558,7 +558,7 @@ async function main() {
     );
     check(
       "AC3",
-      "E2 — gesperrtes Thema (aktiver ra_topic_lock) zeigt Hinweis statt Befehl",
+      "E2 — gesperrtes Thema (aktiver ra_topic_lock) zeigt Hinweis statt Auftragstext",
       lockedGate.text.indexOf("Lauf läuft") !== -1 && lockedGate.hasCommand === false
     );
 
@@ -571,8 +571,9 @@ async function main() {
     );
     check(
       "AC3",
-      "Abgelaufener ra_topic_lock blockiert das Gate nicht — Befehl erscheint normal",
-      staleLockGate === "skills/research/scripts/orchestrator.sh dispatch_pm_anstoss g2 11 <artifact-ref>"
+      "Abgelaufener ra_topic_lock blockiert das Gate nicht — Chat-Auftragstext erscheint normal",
+      staleLockGate ===
+        'PM-Anstoss für Thema "Freies Gate-Thema mit abgelaufenem Lock" (Themen-ID g2, Lauf 11) bitte jetzt durchführen.'
     );
 
     check("AC4", "kein unbehandelter Laufzeitfehler während aller Ladevorgänge", consoleErrors.length === 0);

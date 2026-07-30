@@ -6,8 +6,9 @@
    (window.initSqlJs aus app/vendor/sql-asm.js) und führt ausschliesslich
    SELECT-Abfragen aus (UI-C4). Kein ATTACH der last30days-DB (UI-C5). Liest
    die Divergenz aus ra_divergence, berechnet sie nie selbst (Verträge). Die
-   Gate-Aktion (AC3) schreibt selbst nichts — sie zeigt nur den fertigen
-   Schicht-1-Befehl zum Kopieren (ADR-011). */
+   Gate-Aktion (AC3) schreibt selbst nichts — sie zeigt nur einen fertig
+   formulierten Chat-Auftragstext zum Kopieren, kein Terminal-Befehl
+   (ADR-011, pm-skills ist laut ADR-009 kein CLI-Tool). */
 
 (function () {
   "use strict";
@@ -425,13 +426,14 @@
   }
 
   // renderGateSection (AC3, ADR-011) — „bedienbar" heisst „kopierbar": zeigt
-  // den fertigen orchestrator.sh dispatch_pm_anstoss-Befehl (Thema-/Lauf-
-  // Kontext vorausgefüllt) mit Kopieren-Button. Kein Auto-Submit, keine
-  // Aktion, die selbst schreibt — die Ausführung bleibt Schicht 1
-  // (gate-pm-anstoss.md#AC2). <artifact-ref> bleibt bewusst Platzhalter: die
-  // Anzeige kennt die Vault-Pfad-Referenz nicht, sie entsteht erst durch den
-  // (weiterhin manuellen) Skill-Dispatch-Schritt. „Warten" ist der
-  // Nicht-Klick (anzeige-portfolio#AC3) — kein Gegenstück-Button nötig.
+  // einen fertig formulierten Chat-Auftragstext (Alltagssprache, Themen-Titel
+  // + Themen-/Lauf-ID) mit Kopieren-Button — KEIN Terminal-/Shell-Befehl
+  // (pm-skills ist laut ADR-009 kein CLI-Tool). Der Nutzer fügt den Text in
+  // eine laufende oder neue Claude-Code-Chat-Session ein, die daraufhin den
+  // Skill-Tool-Dispatch + das Bookkeeping ausführt (gate-pm-anstoss.md#AC2).
+  // Kein Auto-Submit, keine Aktion, die selbst schreibt — die Ausführung
+  // bleibt Schicht 1. „Warten" ist der Nicht-Klick (anzeige-portfolio#AC3) —
+  // kein Gegenstück-Button nötig.
   function renderGateSection(topic, latestRun, lock) {
     var section = document.createElement("div");
     section.className = "gate-section";
@@ -447,27 +449,29 @@
 
     section.appendChild(
       mutedNote(
-        "Empfehlung 'weiterverfolgen' erreicht: Befehl kopieren und im Terminal ausführen, um den PM-Anstoss über die bestehende Schicht-1-Schnittstelle zu starten (gate-pm-anstoss.md#AC2) — oder warten (kein Klick nötig)."
+        "Empfehlung 'weiterverfolgen' erreicht: Auftragstext kopieren und in eine Claude-Code-Chat-Session einfügen, um den PM-Anstoss zu starten (gate-pm-anstoss.md#AC2) — oder warten (kein Klick nötig)."
       )
     );
 
-    var commandText =
-      "skills/research/scripts/orchestrator.sh dispatch_pm_anstoss " + topic.id + " " + latestRun.id + " <artifact-ref>";
+    var orderText =
+      'PM-Anstoss für Thema "' + topic.title + '" (Themen-ID ' + topic.id + ", Lauf " + latestRun.id + ") bitte jetzt durchführen.";
 
     var commandRow = document.createElement("div");
     commandRow.className = "gate-command-row";
 
+    var pre = document.createElement("pre");
+    pre.className = "gate-command";
     var code = document.createElement("code");
-    code.className = "gate-command";
-    code.textContent = commandText;
-    commandRow.appendChild(code);
+    code.textContent = orderText;
+    pre.appendChild(code);
+    commandRow.appendChild(pre);
 
     var copyButton = document.createElement("button");
     copyButton.type = "button";
     copyButton.className = "button button-secondary gate-copy-button";
     copyButton.textContent = "Kopieren";
     copyButton.addEventListener("click", function () {
-      copyTextToClipboard(commandText);
+      copyTextToClipboard(orderText);
       copyButton.textContent = "Kopiert!";
       setTimeout(function () {
         copyButton.textContent = "Kopieren";
@@ -478,7 +482,7 @@
     section.appendChild(commandRow);
     section.appendChild(
       mutedNote(
-        "Aus dem Projekt-Repo-Root ausführen; <artifact-ref> vor der Ausführung durch die Vault-Pfad-Referenz aus dem Skill-Dispatch ersetzen (gate-pm-anstoss.md#AC2, Schritt 1)."
+        "In eine laufende oder neue Claude-Code-Chat-Session einfügen — kein Terminal-Befehl (gate-pm-anstoss.md#AC2)."
       )
     );
 

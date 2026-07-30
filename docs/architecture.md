@@ -152,7 +152,7 @@ Nur die **Schnittstelle** (Schema-Details entwirft der `dba`):
 ## Schicht 3 — Anzeige-App (M5)
 
 - **Eigenständige App** (Owner-Entscheid a-1) — **kein** dev-gui-Modul; erscheint in dev-gui wie jedes andere Projekt (nur Projekt-Anzeige, kein Träger).
-- **Umfang:** Portfolio-, Verlaufs-, Divergenz- und Gate-Ansicht. Ab M5 wandert das Gate von CLI/Chat in diese UI (ADR-005) — der **Schreibweg** der Gate-Aktion ist als „Befehl zum Kopieren" entschieden (ADR-011).
+- **Umfang:** Portfolio-, Verlaufs-, Divergenz- und Gate-Ansicht. Ab M5 wandert das Gate von CLI/Chat in diese UI (ADR-005) — der **Schreibweg** der Gate-Aktion ist als „Text zum Kopieren" (Chat-Auftrag, kein Terminal-Befehl) entschieden (ADR-011).
 - **Stack ENTSCHIEDEN (ADR-007):** statisches HTML5 + CSS + Vanilla-JS, **kein** Framework, **kein** Build-Step. Visuelle Ausprägung: [`docs/design.md`](design.md) (owner-freigegeben 2026-07-30) — bindend.
 - **Betriebsmodell:** `app/index.html` wird lokal im Browser geöffnet (`file://`, Doppelklick). **Kein Server-Prozess**, kein Deployment, keine Auth, kein Netzwerkzugriff (C-002/C-004, `html/R03`).
 - **Read-model-Boundary (aufgelöst, ADR-010):** die App liest `research-app.sqlite` **direkt** — über eine mitgelieferte SQLite-Engine (WASM/asm.js) im Browser. Die DB-Datei wird vom Nutzer per **Datei-Auswahl** übergeben und als **In-Memory-Lesekopie** geöffnet. Kein Export-Artefakt, kein Read-API-Prozess, keine Bewertungs-/Orchestrierungslogik in der App (die lebt in Schicht 1).
