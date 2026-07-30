@@ -2,7 +2,7 @@ id: S-022
 parent: F-006
 title: 'Portfolio-Ansicht: alle Themen mit Status, letzter Bewertung (+ Momentum),
   offenen Meilensteinen'
-status: Blocked
+status: Done
 priority: P2
 spec: docs/specs/anzeige-portfolio.md
 implements:
@@ -25,11 +25,11 @@ confidence: low
 tok_est: null
 branch: feat/S-022-portfolio-ansicht-alle-themen-mit-status-letzter-bewertung-m
 pr: null
-blocked_reason: Gate-Text uneindeutig — manuelle Klärung nötig
+blocked_reason: null
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-30T08:48:58Z'
-done_at: null
+updated_at: '2026-07-30T09:19:55Z'
+done_at: '2026-07-30T09:19:54Z'
 claimed_by: MacBook-Pro-von-Alexander.local-30118-1785400244-2862
 claimed_at: '2026-07-30T08:30:45Z'
 tok: '238463344'
