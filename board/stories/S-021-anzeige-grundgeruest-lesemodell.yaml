@@ -23,13 +23,16 @@ estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) ->
   6 -> M.'
 confidence: low
 tok_est: null
-branch: feat/S-021-anzeige-grundgeruest-html-js-dashboard-liest-research-app-sq
+branch: null
 pr: null
-blocked_reason: Spec unvollständig — /requirement nötig
+blocked_reason: 'docs/design.md als Entwurf erstellt (owner_approved: null, 5 offene
+  Gestaltungsfragen) -- wartet auf Owner-Design-Freigabe vor dem ersten UI-Build (S-021
+  ist die erste UI-Story). Owner-Aktion noetig, kein weiterer coder-Lauf bis
+  owner_approved gesetzt ist.'
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
 updated_at: '2026-07-30T00:56:52Z'
 done_at: null
-claimed_by: MacBook-Pro-von-Alexander.local-85900-1785372765-15573
-claimed_at: '2026-07-30T00:52:47Z'
+claimed_by: null
+claimed_at: null
 tok: '40560066'
