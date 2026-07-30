@@ -2,7 +2,7 @@ id: S-021
 parent: F-006
 title: 'Anzeige-Grundgeruest: HTML/JS-Dashboard, liest research-app.sqlite als Lesemodell,
   kein Schreibpfad'
-status: To Do
+status: In Progress
 priority: P2
 spec: docs/specs/anzeige-portfolio.md
 implements:
@@ -23,13 +23,13 @@ estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) ->
   6 -> M.'
 confidence: low
 tok_est: null
-branch: null
+branch: feat/S-021-anzeige-grundgeruest-html-js-dashboard-liest-research-app-sq
 pr: null
 blocked_reason: null
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-30T00:56:52Z'
+updated_at: '2026-07-30T07:39:37Z'
 done_at: null
-claimed_by: null
-claimed_at: null
+claimed_by: MacBook-Pro-von-Alexander.local-13900-1785397174-7294
+claimed_at: '2026-07-30T07:39:35Z'
 tok: '40560066'
