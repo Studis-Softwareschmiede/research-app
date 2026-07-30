@@ -44,6 +44,18 @@ Der PM-Handoff-Pass läuft stattdessen zweigeteilt:
 
 **Späterer Headless-Betrieb (nicht Scope von S-017):** Wird PM-Anstoss irgendwann ohne interaktive Chat-Session ausgelöst (architecture.md „Headless-Automatisierung später"), ersetzt ein `claude -p "/pm-skills:<workflow> …"`-Dispatch (analog `board-feature-drain.sh#generate_dossier` in agent-flow) den Skill-Tool-Aufruf aus Schritt 1 — Schritt 2 (Bookkeeping-Vertrag) bleibt unverändert, da `<artifact-ref>` weiterhin vom Aufrufer (jetzt: dem headless-Wrapper, der die `claude -p`-Ausgabe parst) geliefert wird.
 
+### AC6 — Technischer Mechanismus
+
+`orchestrator.sh` hat keinen Vault-Pfad-Zugriff (AC2-Mechanismus oben) — die Hash-Prüfung gegen manuelle Vault-Änderung läuft daher als zusätzlicher, read-only Schritt **vor** Schritt 1 (Skill-Dispatch), ausgeführt von derselben aufrufenden Session, die auch den Vault liest:
+
+1. **Vorab-Prüfung (Schritt 0, vor jedem Skill-Dispatch):** Existiert zu diesem Thema bereits ein Vorlauf-PM-Anstoss, berechnet die Session den Inhalts-Hash der aktuell im Vault liegenden Vorlauf-Artefakt-Datei (z. B. `shasum -a 256`) und ruft `orchestrator.sh check_artifact_hash <topic-id> <current-hash>` auf. `orchestrator.sh` vergleicht ausschliesslich zwei ihm übergebene/gespeicherte Strings — es liest die Vault-Datei nie selbst.
+2. **Speicherung des erwarteten Vorlauf-Stands:** `dispatch_pm_anstoss` (Schritt 2 des AC2-Mechanismus) nimmt ein optionales fünftes Argument `[artifact-hash]` entgegen — den von der Session berechneten Inhalts-Hash des soeben geschriebenen Artefakts. `db_scripts/lib/pm_dispatch.sh#dispatch_pm_handoff` persistiert ihn in `ra_pm_dispatch.artifact_hash` (data-model.md §2.6, BR-021) als "erwarteten Vorlauf-Stand" für den nächsten Anstoss auf dasselbe Thema.
+
+**Ausgabe von `check_artifact_hash`:**
+- `rc=0` — kein Vorlauf vorhanden, oder Vorlauf hat keinen bekannten `artifact_hash` (Alt-Dispatch vor S-020), oder aktueller Hash stimmt mit dem gespeicherten überein: kein Mismatch, Skill-Dispatch darf starten.
+- `rc=3` — Hash-Mismatch: das Vault-Artefakt wurde offenbar seit dem letzten PM-Anstoss manuell bearbeitet. Der Skill-Dispatch **darf nicht** starten; die Session stellt dem Owner stattdessen die Rückfrage, ob trotzdem überschrieben werden soll (kein automatischer Entscheid, analog AC1).
+- `rc=1` — Fehler (Format-Guard, DB-Fehler).
+
 ## Edge-Cases & Fehlerverhalten
 - **E1** Vault nicht erreichbar (Mac-Pfad, iCloud-Sync) → klarer Abbruch vor jedem Schreiben, kein Teil-Artefakt.
 - **E2** pm-skills-Plugin in der aktiven Session nicht verfügbar (Skill/Sub-Agent nicht auffindbar bzw. Plugin nicht installiert) → Skill-Dispatch (Schritt 1) schlägt fehl/wird von Claude erkannt; PM-Handoff bricht **vor** jedem `orchestrator.sh dispatch_pm_anstoss`-Aufruf ab (kein Halb-Artefakt, kein DB-Schreibversuch ohne `artifact-ref`); das Thema bleibt unverändert `aktiv`.

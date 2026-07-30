@@ -9,7 +9,8 @@
 # nie automatisch (gate-pm-anstoss#AC1, S-016).
 #
 # Quelle: docs/specs/research-skill.md AC1/AC2/AC4/AC5/AC6/AC7 + Edge-Cases
-# E1/E2/E3. docs/specs/gate-pm-anstoss.md AC1. docs/architecture.md
+# E1/E2/E3. docs/specs/gate-pm-anstoss.md AC1/AC2/AC3/AC4/AC5/AC6.
+# docs/architecture.md
 # "Orchestrator"-Komponente (Einstieg; waehlt Modus, ruft Paesse in
 # Reihenfolge) + "Voraussetzungs-Ueberblick"-Komponente ("Klaerungspunkte
 # inkl. Schutzrechte, kein Rechtsmodul") + "SWOT-Judge"/"Recommendation"/
@@ -44,6 +45,11 @@
 # gate-pm-anstoss#AC4 (Divergenz-Ausweis): db_scripts/lib/pm_dispatch.sh
 # (get_latest_pm_dispatch, Vorlauf-Ermittlung) + db_scripts/lib/divergence.sh
 # (compute_swot_delta/compute_milestone_delta/create_divergence/get_divergence).
+# gate-pm-anstoss#AC6 (Manuelle Vault-Aenderung, S-020): check_artifact_hash
+# vergleicht -- read-only, kein eigener Vault-Zugriff (ADR-009) -- einen vom
+# Aufrufer gelieferten Inhalts-Hash gegen den in pm_dispatch.sh#
+# get_latest_pm_dispatch gespeicherten artifact_hash des Vorlaufs; Mismatch
+# (rc=3) loest eine Rueckfrage statt stillem Ueberschreiben aus.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -441,7 +447,7 @@ materialize_and_render_divergence() {
   return 0
 }
 
-# dispatch_pm_anstoss <db-path> <topic-id> <run-id> <artifact-ref>
+# dispatch_pm_anstoss <db-path> <topic-id> <run-id> <artifact-ref> [artifact-hash]
 # gate-pm-anstoss#AC2 (ADR-009): deterministisches Bookkeeping NACH dem
 # agentischen Skill-Dispatch. pm-skills ist kein CLI-Tool und wird von diesem
 # Skript NIE aufgerufen -- die aufrufende Claude-Session hat pm-skills bereits
@@ -453,6 +459,13 @@ materialize_and_render_divergence() {
 #     Thema-Status 'aktiv')
 #   - Dispatch in ra_pm_dispatch protokollieren (idempotent via UNIQUE)
 #   - Status-Transition 'aktiv' -> 'im_pm' (BR-006, architecture.md §7)
+#
+# [artifact-hash] (optional, Default ''): gate-pm-anstoss#AC6 (S-020) -- der
+# vom Aufrufer berechnete Inhalts-Hash des soeben geschriebenen PM-Artefakts,
+# wird als "erwarteter Vorlauf-Stand" gespeichert (pm_dispatch.sh#
+# dispatch_pm_handoff). check_artifact_hash() (unten) prueft diesen Wert beim
+# naechsten Anstoss auf dasselbe Thema, BEVOR der naechste Skill-Dispatch das
+# Vault-Artefakt ueberschreibt.
 #
 # rc=0: neuer Dispatch, Status gesetzt
 # rc=2: idempotenter Dispatch (gleicher Hash, bereits vorhanden) -- der
@@ -472,6 +485,7 @@ dispatch_pm_anstoss() {
   local topic_id="$2"
   local run_id="$3"
   local artifact_ref="$4"
+  local artifact_hash="${5:-}"
   local row recommendation momentum_only topic_title
   local result_hash rc
   local prev_dispatch_row prev_run_id=""
@@ -543,7 +557,7 @@ dispatch_pm_anstoss() {
   # Idempotenz-Meldung unten ausgegeben wird (analog set +e/set -e um
   # acquire_topic_lock weiter oben in dieser Datei).
   set +e
-  dispatch_pm_handoff "$db" "$topic_id" "$run_id" "$result_hash" "$artifact_ref"
+  dispatch_pm_handoff "$db" "$topic_id" "$run_id" "$result_hash" "$artifact_ref" "$artifact_hash"
   rc=$?
   set -e
   if [ "$rc" -eq 0 ]; then
@@ -632,6 +646,57 @@ dispatch_pm_anstoss() {
 
   echo "PM-Anstoss erfolgreich abgeschlossen -- Uebergabe an agent-flow per pm-import (pm-import liest Vault-Artefakte, ADR-003)."
   return 0
+}
+
+# check_artifact_hash <db-path> <topic-id> <current-hash>
+# gate-pm-anstoss#AC6 (S-020): read-only Vorab-Pruefung, die die aufrufende
+# Claude-Session VOR jedem Skill-Dispatch (gate-pm-anstoss.md AC2 "Technischer
+# Aufrufmechanismus", Schritt 1) durchfuehrt, wenn zum Thema bereits ein
+# Vorlauf-PM-Anstoss existiert. orchestrator.sh hat KEINEN Vault-Pfad-Zugriff
+# (ADR-009) -- <current-hash> ist der vom Aufrufer bereits berechnete
+# Inhalts-Hash (z.B. `shasum -a 256`) der aktuell im Vault liegenden
+# Vorlauf-Artefakt-Datei (Pfad: get_latest_pm_dispatch#artifact_ref).
+#
+# Rueckgabewerte:
+#   rc=0: kein Vergleich noetig/moeglich (kein Vorlauf ODER Vorlauf hat keinen
+#         bekannten artifact_hash, Alt-Dispatch vor S-020) ODER Hash stimmt
+#         ueberein -- Skill-Dispatch kann bedenkenlos starten.
+#   rc=3: Hash-Mismatch -- das Vault-Artefakt wurde offenbar seit dem letzten
+#         PM-Anstoss manuell bearbeitet. Skill-Dispatch NICHT starten,
+#         stattdessen den Owner explizit fragen, ob trotzdem ueberschrieben
+#         werden soll (AC6, kein stilles Ueberschreiben).
+#   rc=1: Fehler (Format-Guard, DB-Fehler).
+check_artifact_hash() {
+  local db="$1"
+  local topic_id="$2"
+  local current_hash="$3"
+  local latest_row prev_artifact_hash prev_artifact_ref
+
+  if ! [[ "$topic_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+    echo "FATAL: Themen-ID '$topic_id' verletzt das UUID-Format -- Pruefung abgelehnt (security/R03)." >&2
+    return 1
+  fi
+
+  latest_row="$(get_latest_pm_dispatch "$db" "$topic_id")" || return 1
+  if [ -z "$latest_row" ]; then
+    echo "Kein Vorlauf-PM-Anstoss zu diesem Thema -- kein Hash-Vergleich noetig (Erst-Anstoss, AC6 entfaellt)."
+    return 0
+  fi
+
+  IFS='|' read -r _ _ prev_artifact_hash prev_artifact_ref <<< "$latest_row"
+
+  if [ -z "$prev_artifact_hash" ]; then
+    echo "Vorlauf-Dispatch '$prev_artifact_ref' hat keinen bekannten artifact_hash (Alt-Dispatch vor S-020) -- kein Hash-Vergleich moeglich, kein Mismatch-Alarm."
+    return 0
+  fi
+
+  if [ "$current_hash" = "$prev_artifact_hash" ]; then
+    echo "Hash-Abgleich (AC6): aktueller Inhalts-Hash von '$prev_artifact_ref' stimmt mit dem erwarteten Vorlauf-Stand ueberein -- keine manuelle Vault-Aenderung erkannt."
+    return 0
+  fi
+
+  echo "RUECKFRAGE (gate-pm-anstoss#AC6): das PM-Artefakt '$prev_artifact_ref' wurde offenbar seit dem letzten PM-Anstoss manuell im Obsidian-Vault bearbeitet (Hash-Mismatch gegen den erwarteten Vorlauf-Stand). NICHT still ueberschreiben -- den Owner fragen, ob trotzdem fortgefahren werden soll." >&2
+  return 3
 }
 
 # research_thema <db-path> <topic-title> <save-dir-base>
@@ -743,7 +808,8 @@ Usage:
   orchestrator.sh thema "<Thema-String>" [save-dir]
   orchestrator.sh recommend <topic-id>
   orchestrator.sh evaluation <run-id>
-  orchestrator.sh dispatch_pm_anstoss <topic-id> <run-id> <artifact-ref>
+  orchestrator.sh check_artifact_hash <topic-id> <current-hash>
+  orchestrator.sh dispatch_pm_anstoss <topic-id> <run-id> <artifact-ref> [artifact-hash]
 
 Env:
   RA_DB_PATH                    Pfad zur research-app.sqlite (Default: research-app.sqlite)
@@ -755,6 +821,14 @@ Hinweis (ADR-009): <artifact-ref> ist die Vault-Pfad-Referenz der PM-Artefakte,
 die die aufrufende Claude-Session bereits VOR diesem Aufruf ueber das
 Skill-Tool per pm-skills erzeugt hat -- orchestrator.sh ruft pm-skills nie
 selbst auf und ermittelt <artifact-ref> nie selbst.
+
+Hinweis (gate-pm-anstoss#AC6, S-020): <current-hash>/[artifact-hash] sind vom
+Aufrufer berechnete Inhalts-Hashes des Vault-Artefakts -- orchestrator.sh hat
+keinen Vault-Pfad-Zugriff und liest/hasht nie selbst. check_artifact_hash
+prueft VOR jedem Skill-Dispatch, ob das Vorlauf-Artefakt seit dem letzten
+Anstoss manuell bearbeitet wurde (rc=3 -- Rueckfrage statt stillem
+Ueberschreiben); dispatch_pm_anstoss speichert [artifact-hash] als neuen
+erwarteten Vorlauf-Stand fuer den naechsten Anstoss.
 USAGE
 }
 
@@ -780,7 +854,13 @@ main() {
       local topic_id="${2:-}"
       local run_id="${3:-}"
       local artifact_ref="${4:-}"
-      dispatch_pm_anstoss "$RA_DB_PATH" "$topic_id" "$run_id" "$artifact_ref"
+      local artifact_hash="${5:-}"
+      dispatch_pm_anstoss "$RA_DB_PATH" "$topic_id" "$run_id" "$artifact_ref" "$artifact_hash"
+      ;;
+    check_artifact_hash)
+      local topic_id="${2:-}"
+      local current_hash="${3:-}"
+      check_artifact_hash "$RA_DB_PATH" "$topic_id" "$current_hash"
       ;;
     *)
       usage

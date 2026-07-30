@@ -68,7 +68,7 @@ Schicht:
    Businessplan-Template bei `weiterverfolgen`) sowie das Entscheidungs-Gate
    als Teil des Recherche-Briefs.
 
-## Entscheidungs-Gate & PM-Anstoss (AC1+AC2, `docs/specs/gate-pm-anstoss.md`, S-016+S-017)
+## Entscheidungs-Gate & PM-Anstoss (AC1+AC2+AC6, `docs/specs/gate-pm-anstoss.md`, S-016+S-017+S-020)
 
 Ist die Empfehlung des gerade gerenderten Laufs `weiterverfolgen`, hängt
 `orchestrator.sh#print_gate_prompt` an den Brief eine **explizite** Wahl an:
@@ -86,6 +86,23 @@ Interface. `orchestrator.sh` kann pm-skills daher **nicht** als Subprocess
 aufrufen. Entscheidet sich der Owner für "PM-Anstoss", läuft der Handoff
 stattdessen so:
 
+0. **AC6 (S-020): Hash-Vorab-Prüfung gegen manuelle Vault-Änderung.** Bevor
+   Claude den Skill-Dispatch (Schritt 1) startet, prüft es, ob zu diesem Thema
+   bereits ein Vorlauf-PM-Anstoss existiert:
+
+   ```bash
+   skills/research/scripts/orchestrator.sh check_artifact_hash <topic-id> <current-hash>
+   ```
+
+   `<current-hash>` ist der von Claude selbst berechnete Inhalts-Hash (z. B.
+   `shasum -a 256`) der Vorlauf-Artefakt-Datei, wie sie **aktuell** im Vault
+   liegt — `orchestrator.sh` liest den Vault nie selbst (ADR-009), Pfad und
+   Inhalt kommen von Claude. Gibt es keinen Vorlauf oder ist zu ihm kein
+   `artifact_hash` bekannt (rc=0, Alt-Dispatch vor S-020), sowie bei
+   Übereinstimmung (rc=0), fährt Claude normal mit Schritt 1 fort. Bei
+   Mismatch (rc=3) **stoppt Claude vor dem Skill-Dispatch** und fragt den
+   Owner explizit, ob trotz der erkannten manuellen Bearbeitung im Obsidian
+   überschrieben werden soll — kein stilles Überschreiben (AC6, PRD Edge).
 1. **Skill-Dispatch (agentisch, im selben Turn):** Claude — dieselbe Session,
    die gerade das `/research`-Skill ausführt und die Gate-Wahl entgegengenommen
    hat — ruft **über das Skill-Tool** den passenden pm-skills-Workflow auf
@@ -94,15 +111,19 @@ stattdessen so:
    pm-skills erzeugt die Konzept-/Spec-Artefakte und schreibt sie selbst in den
    Obsidian-Vault — kein Rückkanal an ein Bash-Skript.
 2. **Deterministisches Bookkeeping (bash, kein pm-skills-Zugriff):** Erst NACH
-   abgeschlossenem Skill-Dispatch ruft dieselbe Session:
+   abgeschlossenem Skill-Dispatch berechnet Claude den Inhalts-Hash der neu
+   geschriebenen Artefakt-Datei und ruft:
 
    ```bash
-   skills/research/scripts/orchestrator.sh dispatch_pm_anstoss <topic-id> <run-id> <artifact-ref>
+   skills/research/scripts/orchestrator.sh dispatch_pm_anstoss <topic-id> <run-id> <artifact-ref> [artifact-hash]
    ```
 
    `<artifact-ref>` ist die Vault-Pfad-Referenz der eben erzeugten Artefakte —
    die Session kennt sie aus dem Skill-Ergebnis, sie wird **nie** von
-   `orchestrator.sh` selbst ermittelt. Der Befehl prüft die Vorbedingungen
+   `orchestrator.sh` selbst ermittelt. `[artifact-hash]` (AC6, S-020) ist der
+   soeben berechnete Inhalts-Hash — er wird als neuer "erwarteter
+   Vorlauf-Stand" gespeichert, gegen den Schritt 0 beim **nächsten** Anstoss
+   auf dieses Thema vergleicht. Der Befehl prüft die Vorbedingungen
    (Empfehlung `weiterverfolgen`, Thema-Status `aktiv` **oder** bereits
    `im_pm` — letzteres deckt einen wiederholten/divergierenden Dispatch zu
    einem Thema ab, das schon im PM-Prozess ist), protokolliert den
@@ -180,13 +201,22 @@ skills/research/scripts/orchestrator.sh discovery [save-dir]
 skills/research/scripts/orchestrator.sh thema "<Thema-String>" [save-dir]
 skills/research/scripts/orchestrator.sh recommend <topic-id>
 skills/research/scripts/orchestrator.sh evaluation <run-id>
-skills/research/scripts/orchestrator.sh dispatch_pm_anstoss <topic-id> <run-id> <artifact-ref>
+skills/research/scripts/orchestrator.sh check_artifact_hash <topic-id> <current-hash>
+skills/research/scripts/orchestrator.sh dispatch_pm_anstoss <topic-id> <run-id> <artifact-ref> [artifact-hash]
 ```
 
 `<artifact-ref>` (S-017 AC2, ADR-009): die Vault-Pfad-Referenz der PM-Artefakte,
 die die aufrufende Session bereits VOR diesem Aufruf über das Skill-Tool per
 pm-skills erzeugt hat — `orchestrator.sh` ruft pm-skills nie selbst auf und
 ermittelt diesen Pfad nie selbst.
+
+`<current-hash>`/`[artifact-hash]` (S-020, AC6): vom Aufrufer berechnete
+Inhalts-Hashes des Vault-Artefakts — `orchestrator.sh` hat keinen
+Vault-Pfad-Zugriff und liest/hasht nie selbst. `check_artifact_hash` prüft VOR
+jedem Skill-Dispatch, ob das Vorlauf-Artefakt seit dem letzten Anstoss manuell
+bearbeitet wurde (rc=3 → Rückfrage statt stillem Überschreiben);
+`dispatch_pm_anstoss` speichert `[artifact-hash]` als neuen erwarteten
+Vorlauf-Stand für den nächsten Anstoss.
 
 Env-Overrides:
 - `RA_DB_PATH` — Pfad zur `research-app.sqlite` (Default: `research-app.sqlite`).

@@ -152,6 +152,18 @@
 # eine Warnung auf stderr, die Funktion faehrt mit ihrem eigentlichen rc (0
 # oder 2) fort (Reviewer-Fund S-019 Iteration 3, Header-Vertrag oben in
 # orchestrator.sh#dispatch_pm_anstoss praezisiert).
+# AC6 (Manuelle Vault-Aenderung, S-020): orchestrator.sh#check_artifact_hash --
+# read-only Vorab-Pruefung, die die aufrufende Session VOR jedem Skill-Dispatch
+# (kein eigener Vault-Zugriff, ADR-009) durchfuehrt: vergleicht einen vom
+# Aufrufer gelieferten Inhalts-Hash gegen den in pm_dispatch.sh#
+# get_latest_pm_dispatch gespeicherten artifact_hash des Vorlaufs. Kein Vorlauf
+# ODER Vorlauf ohne bekannten artifact_hash (Alt-Dispatch vor S-020) ODER
+# uebereinstimmender Hash -> rc=0 (Skill-Dispatch darf starten); Mismatch ->
+# rc=3 (Rueckfrage statt stillem Ueberschreiben). dispatch_pm_anstoss nimmt ein
+# optionales fuenftes Argument [artifact-hash] entgegen und speichert es ueber
+# pm_dispatch.sh#dispatch_pm_handoff als neuen erwarteten Vorlauf-Stand fuer
+# den naechsten Anstoss. main('check_artifact_hash', ...) ist der
+# Reachability-Pfad (coder/R07).
 #
 # last30days selbst ist in diesem Test-Environment nicht installiert (externe,
 # API-/Netzwerk-abhaengige Installation) -- alle last30days-Aufrufe laufen
@@ -1473,6 +1485,89 @@ if [ "$rc_cond" != "0" ] && grep -qi "weiterverfolgen" "$ERR_AC2_COND"; then
   ok "Vorbedingung 'recommendation=weiterverfolgen' wird geprueft und durchgesetzt (AC2, BR-102)"
 else
   bad "erwartete rc!=0 + Fehler-Meldung mit 'weiterverfolgen', bekam rc=$rc_cond err=$(cat "$ERR_AC2_COND")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC6 -- orchestrator.sh check_artifact_hash: kein Vorlauf-PM-Anstoss -- kein Hash-Vergleich noetig, Skill-Dispatch darf starten =="
+DB_AC6_NOPREV="$(new_migrated_db "$TMP/ac6-noprev.sqlite")"
+TOPIC_AC6_NOPREV="$(create_topic "$DB_AC6_NOPREV" "Thema ohne PM-Vorlauf" 2>/dev/null)"
+OUT_AC6_NOPREV="$TMP/ac6_noprev.txt"
+rc_ac6_noprev=0
+RA_DB_PATH="$DB_AC6_NOPREV" \
+  bash "$ORCHESTRATOR_SCRIPT" check_artifact_hash "$TOPIC_AC6_NOPREV" "irgendein-aktueller-hash" > "$OUT_AC6_NOPREV" 2>&1 || rc_ac6_noprev=$?
+if [ "$rc_ac6_noprev" = "0" ] && grep -qi "Kein Vorlauf" "$OUT_AC6_NOPREV"; then
+  ok "check_artifact_hash: kein Vorlauf -> rc=0, kein Vergleich noetig (AC6, Erst-Anstoss)"
+else
+  bad "erwartete rc=0 + 'Kein Vorlauf'-Meldung, bekam rc=$rc_ac6_noprev out=$(cat "$OUT_AC6_NOPREV")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC6,security/R03 -- orchestrator.sh check_artifact_hash: ungueltige Themen-ID wird vor SQL-Interpolation abgelehnt =="
+ERR_AC6_BADID="$TMP/ac6_badid.err"
+rc_ac6_badid=0
+RA_DB_PATH="$DB_AC6_NOPREV" \
+  bash "$ORCHESTRATOR_SCRIPT" check_artifact_hash "not-a-uuid" "irgendein-hash" > /dev/null 2> "$ERR_AC6_BADID" || rc_ac6_badid=$?
+if [ "$rc_ac6_badid" = "1" ] && grep -qi "UUID-Format" "$ERR_AC6_BADID"; then
+  ok "check_artifact_hash: ungueltige Themen-ID wird vor SQL-Interpolation abgelehnt (security/R03)"
+else
+  bad "erwartete rc=1 + UUID-Format-Fehler, bekam rc=$rc_ac6_badid err=$(cat "$ERR_AC6_BADID")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC6 -- orchestrator.sh dispatch_pm_anstoss speichert [artifact-hash]; check_artifact_hash: uebereinstimmender Hash -> rc=0, keine manuelle Vault-Aenderung erkannt =="
+DB_AC6="$(new_migrated_db "$TMP/ac6-match.sqlite")"
+TOPIC_AC6="$(create_topic "$DB_AC6" "Thema fuer AC6 Hash-Match" 2>/dev/null)"
+RUN_AC6_FULL="$(create_run "$DB_AC6" "$TOPIC_AC6" "recherche" "fa761c12aa31c1e37cd9a5f6e7f8a9b9c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC6="${RUN_AC6_FULL%%|*}"
+ARTIFACT_REF_AC6="Research/PM_Artifacts_${TOPIC_AC6}_${RUN_AC6}"
+ARTIFACT_HASH_AC6="deadbeef00112233445566778899aabbccddeeff0011223344556677889900"
+
+RA_DB_PATH="$DB_AC6" \
+  bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC6" "$RUN_AC6" "$ARTIFACT_REF_AC6" "$ARTIFACT_HASH_AC6" > /dev/null 2>&1
+
+STORED_HASH_AC6="$(sqlite3 "$DB_AC6" "SELECT artifact_hash FROM ra_pm_dispatch WHERE topic_id = '$TOPIC_AC6';")"
+if [ "$STORED_HASH_AC6" = "$ARTIFACT_HASH_AC6" ]; then
+  ok "dispatch_pm_anstoss speichert das gelieferte [artifact-hash] in ra_pm_dispatch.artifact_hash (AC6)"
+else
+  bad "erwartetes artifact_hash=$ARTIFACT_HASH_AC6, bekam '$STORED_HASH_AC6'"
+fi
+
+OUT_AC6_MATCH="$TMP/ac6_match.txt"
+rc_ac6_match=0
+RA_DB_PATH="$DB_AC6" \
+  bash "$ORCHESTRATOR_SCRIPT" check_artifact_hash "$TOPIC_AC6" "$ARTIFACT_HASH_AC6" > "$OUT_AC6_MATCH" 2>&1 || rc_ac6_match=$?
+if [ "$rc_ac6_match" = "0" ] && grep -qi "stimmt.*ueberein" "$OUT_AC6_MATCH"; then
+  ok "check_artifact_hash: uebereinstimmender Hash -> rc=0, keine manuelle Vault-Aenderung erkannt (AC6)"
+else
+  bad "erwartete rc=0 + Uebereinstimmungs-Meldung, bekam rc=$rc_ac6_match out=$(cat "$OUT_AC6_MATCH")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC6 -- orchestrator.sh check_artifact_hash: Hash-Mismatch -> rc=3, Rueckfrage statt stillem Ueberschreiben =="
+ERR_AC6_MISMATCH="$TMP/ac6_mismatch.err"
+rc_ac6_mismatch=0
+RA_DB_PATH="$DB_AC6" \
+  bash "$ORCHESTRATOR_SCRIPT" check_artifact_hash "$TOPIC_AC6" "0000000000000000000000000000000000000000000000000000000000" > /dev/null 2> "$ERR_AC6_MISMATCH" || rc_ac6_mismatch=$?
+if [ "$rc_ac6_mismatch" = "3" ] && grep -qi "RUECKFRAGE" "$ERR_AC6_MISMATCH" && grep -qi "manuell" "$ERR_AC6_MISMATCH"; then
+  ok "check_artifact_hash: Hash-Mismatch -> rc=3, Rueckfrage-Meldung statt stillem Ueberschreiben (AC6, PRD Edge)"
+else
+  bad "erwartete rc=3 + RUECKFRAGE-Meldung, bekam rc=$rc_ac6_mismatch err=$(cat "$ERR_AC6_MISMATCH")"
+fi
+
+echo "== @trace gate-pm-anstoss#AC6 -- orchestrator.sh check_artifact_hash: Vorlauf ohne bekannten artifact_hash (Alt-Dispatch vor S-020) -> rc=0, kein falscher Mismatch-Alarm =="
+DB_AC6_LEGACY="$(new_migrated_db "$TMP/ac6-legacy.sqlite")"
+TOPIC_AC6_LEGACY="$(create_topic "$DB_AC6_LEGACY" "Thema mit Alt-Dispatch ohne Hash" 2>/dev/null)"
+RUN_AC6_LEGACY_FULL="$(create_run "$DB_AC6_LEGACY" "$TOPIC_AC6_LEGACY" "recherche" "ab761c12aa31c1e37cd9a5f6e7f8a9b9c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8" "weiterverfolgen" "0" "1" 2>/dev/null)"
+RUN_AC6_LEGACY="${RUN_AC6_LEGACY_FULL%%|*}"
+
+RA_DB_PATH="$DB_AC6_LEGACY" \
+  bash "$ORCHESTRATOR_SCRIPT" dispatch_pm_anstoss "$TOPIC_AC6_LEGACY" "$RUN_AC6_LEGACY" "Research/PM_Artifacts_legacy" > /dev/null 2>&1
+# Bewusst KEIN 5. Argument (artifact-hash) -- simuliert einen Alt-Dispatch vor S-020
+
+OUT_AC6_LEGACY="$TMP/ac6_legacy.txt"
+rc_ac6_legacy=0
+RA_DB_PATH="$DB_AC6_LEGACY" \
+  bash "$ORCHESTRATOR_SCRIPT" check_artifact_hash "$TOPIC_AC6_LEGACY" "irgendein-aktueller-hash" > "$OUT_AC6_LEGACY" 2>&1 || rc_ac6_legacy=$?
+if [ "$rc_ac6_legacy" = "0" ] && grep -qi "keinen bekannten artifact_hash" "$OUT_AC6_LEGACY"; then
+  ok "check_artifact_hash: Alt-Dispatch ohne artifact_hash -> rc=0, kein falscher Mismatch-Alarm (AC6)"
+else
+  bad "erwartete rc=0 + 'keinen bekannten artifact_hash'-Meldung, bekam rc=$rc_ac6_legacy out=$(cat "$OUT_AC6_LEGACY")"
 fi
 
 echo

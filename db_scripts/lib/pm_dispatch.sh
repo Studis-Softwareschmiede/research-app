@@ -5,8 +5,13 @@
 # Quelle: docs/specs/gate-pm-anstoss.md AC2 ("PM-Anstoss idempotent mit
 # Divergenz-Ausweis"), AC3 ("Idempotenz via UNIQUE(topic_id, result_hash)"),
 # AC4 ("Divergenz-Ausweis bei veraendertem Ergebnisstand" -- get_latest_pm_dispatch
-# liefert den Vorlauf fuer orchestrator.sh#materialize_and_render_divergence);
-# docs/data-model.md §2.6, §4 BR-017 (Idempotenz-Invariante).
+# liefert den Vorlauf fuer orchestrator.sh#materialize_and_render_divergence),
+# AC6 ("Manuelle Vault-Aenderung: Hash-Mismatch gegen erwarteten Vorlauf-Stand
+# loest Rueckfrage aus" -- dispatch_pm_handoff speichert den vom Aufrufer
+# gelieferten artifact_hash, get_latest_pm_dispatch liefert ihn fuer
+# orchestrator.sh#check_artifact_hash zurueck);
+# docs/data-model.md §2.6, §4 BR-017 (Idempotenz-Invariante), BR-021
+# (artifact_hash-Semantik).
 # architecture.md: "Data-Access" ist die einzige Schreib-/Lesestelle der
 # Bewertungs-Tabellen (single-writer) -- diese Datei IST diese Schicht. Analog
 # zu topic.sh/milestone.sh/run.sh: reine Bash-Funktionen, die SQL gegen die
@@ -19,7 +24,7 @@
 # Watchlist-Job + /research gleichzeitig schreiben koennen; Referenz-Idiom
 # run.sh#create_run).
 
-# dispatch_pm_handoff <db-path> <topic-id> <run-id> <result-hash> <artifact-ref>
+# dispatch_pm_handoff <db-path> <topic-id> <run-id> <result-hash> <artifact-ref> [artifact-hash]
 # Laegt einen PM-Dispatch-Datensatz an, idempotent ueber (topic_id, result_hash).
 # Bei Idempotenz-Konflikt (gleiche topic_id + result_hash):
 #   - rc=2: wiederholter Dispatch identischen Inhalts (is_empty Divergenz, AC3)
@@ -27,6 +32,14 @@
 #   - rc=1: Fehler (DB-Fehler, Constraint-Verletzung, Formatfehler)
 #
 # Gibt die neue/bestehende dispatch-ID auf stdout aus, nur wenn rc=0.
+#
+# [artifact-hash] (optional, Default ''): gate-pm-anstoss#AC6 (S-020) --
+# der vom Aufrufer (agentische Session, Vault-Lesezugriff) berechnete
+# Inhalts-Hash des soeben geschriebenen PM-Artefakts. Wird als "erwarteter
+# Vorlauf-Stand" gespeichert, den orchestrator.sh#check_artifact_hash beim
+# naechsten PM-Anstoss auf dasselbe Thema gegen den dann aktuellen
+# Vault-Inhalt vergleicht (manuelle Vault-Aenderung -> Rueckfrage statt
+# stillem Ueberschreiben). Leer = kein Hash bekannt, Vergleich entfaellt.
 #
 # Sicherheit (security/R03): topic_id und run_id werden VOR der SQL-Interpolation
 # formatiert/validiert (UUID-Format bzw. Ganzzahl-Format).
@@ -36,6 +49,7 @@ dispatch_pm_handoff() {
   local run_id="$3"
   local result_hash="$4"
   local artifact_ref="$5"
+  local artifact_hash="${6:-}"
   local insert_err rc dispatch_id
 
   # Format-Guard fuer topic_id (UUID, security/R03, Lesson S-001 2026-07-27).
@@ -50,9 +64,10 @@ dispatch_pm_handoff() {
     return 1
   fi
 
-  # Apostroph-Escape fuer result_hash und artifact_ref (Freitext, security/R03).
+  # Apostroph-Escape fuer result_hash, artifact_ref und artifact_hash (Freitext, security/R03).
   local escaped_hash="${result_hash//\'/\'\'}"
   local escaped_ref="${artifact_ref//\'/\'\'}"
+  local escaped_artifact_hash="${artifact_hash//\'/\'\'}"
 
   # Ueberpruefung auf Idempotenz-Konflikt: gibt es bereits einen Dispatch
   # mit (topic_id, result_hash)?
@@ -73,8 +88,8 @@ PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 .output stdout
 BEGIN IMMEDIATE;
-INSERT INTO ra_pm_dispatch (topic_id, run_id, result_hash, artifact_ref)
-VALUES ('$topic_id', $run_id, '$escaped_hash', '$escaped_ref');
+INSERT INTO ra_pm_dispatch (topic_id, run_id, result_hash, artifact_ref, artifact_hash)
+VALUES ('$topic_id', $run_id, '$escaped_hash', '$escaped_ref', '$escaped_artifact_hash');
 COMMIT;
 SQL
 )"
@@ -110,10 +125,16 @@ get_pm_dispatch() {
 }
 
 # get_latest_pm_dispatch <db-path> <topic-id> [exclude-run-id]
-# Reine Lesefunktion (gate-pm-anstoss#AC4): liefert den zuletzt fuer dieses Thema
-# dispatchten Lauf als "run_id|result_hash" (neuester Eintrag nach dispatched_at,
-# id als Tie-Breaker), oder leere Ausgabe, wenn kein passender PM-Dispatch
-# existiert (rc=0, kein Fehlerfall -- Erst-Anstoss hat keinen Vorlauf).
+# Reine Lesefunktion (gate-pm-anstoss#AC4/AC6): liefert den zuletzt fuer dieses
+# Thema dispatchten Lauf als "run_id|result_hash|artifact_hash|artifact_ref"
+# (neuester Eintrag nach dispatched_at, id als Tie-Breaker), oder leere
+# Ausgabe, wenn kein passender PM-Dispatch existiert (rc=0, kein Fehlerfall --
+# Erst-Anstoss hat keinen Vorlauf). artifact_hash/artifact_ref (AC6, S-020)
+# werden von orchestrator.sh#check_artifact_hash genutzt, um VOR dem naechsten
+# Skill-Dispatch zu pruefen, ob das Vorlauf-Artefakt seit dem letzten Anstoss
+# manuell im Vault bearbeitet wurde. artifact_ref (potenziell Freitext) steht
+# bewusst am Zeilenende (sqlite/DBA-Lesson S-011: Freitext-Spalte nie in der
+# Mitte einer pipe-getrennten Ausgabe).
 #
 # [exclude-run-id] (optional): schliesst Zeilen mit genau diesem run_id aus der
 # Suche aus. Aufrufer (orchestrator.sh#dispatch_pm_anstoss) uebergibt hier den
@@ -143,7 +164,7 @@ get_latest_pm_dispatch() {
     exclude_clause="AND run_id != $exclude_run_id"
   fi
 
-  sqlite3 -separator '|' "$db" "SELECT run_id, result_hash FROM ra_pm_dispatch WHERE topic_id = '$topic_id' $exclude_clause ORDER BY dispatched_at DESC, id DESC LIMIT 1;" 2>/dev/null
+  sqlite3 -separator '|' "$db" "SELECT run_id, result_hash, artifact_hash, artifact_ref FROM ra_pm_dispatch WHERE topic_id = '$topic_id' $exclude_clause ORDER BY dispatched_at DESC, id DESC LIMIT 1;" 2>/dev/null
   return 0
 }
 
@@ -152,7 +173,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   usage() {
     cat >&2 <<'USAGE'
 Usage:
-  pm_dispatch.sh dispatch <db-path> <topic-id> <run-id> <result-hash> <artifact-ref>
+  pm_dispatch.sh dispatch <db-path> <topic-id> <run-id> <result-hash> <artifact-ref> [artifact-hash]
   pm_dispatch.sh get <db-path> <topic-id> <result-hash>
   pm_dispatch.sh latest <db-path> <topic-id> [exclude-run-id]
 USAGE
@@ -161,7 +182,7 @@ USAGE
 
   case "${1:-}" in
     dispatch)
-      dispatch_pm_handoff "$2" "$3" "$4" "$5" "$6"
+      dispatch_pm_handoff "$2" "$3" "$4" "$5" "$6" "${7:-}"
       ;;
     get)
       get_pm_dispatch "$2" "$3" "$4"

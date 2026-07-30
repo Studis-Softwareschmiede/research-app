@@ -102,6 +102,7 @@ Protokolliert das Entscheidungs-Gate-Ergebnis + PM-Anstoss (C-005 M4); Idempoten
 | `run_id` | INTEGER | ! , FK→`ra_run(id)` | Der auslösende PM-Lauf (`kind='pm'`). |
 | `result_hash` | TEXT | ! | Hash-Stand zum Dispatch-Zeitpunkt. |
 | `artifact_ref` | TEXT | ! | Obsidian-Pfad / pm-import-Version-Anker der erzeugten PM-Artefakte. |
+| `artifact_hash` | TEXT | ! default `''` | Vom Aufrufer berechneter Inhalts-Hash des PM-Artefakts zum Dispatch-Zeitpunkt (erwarteter Vorlauf-Stand, AC6/BR-021). Leer = kein Hash bekannt (Alt-Dispatch vor S-020). |
 | `dispatched_at` | TEXT | ! default now | |
 | UNIQUE | | (`topic_id`,`result_hash`) | **Idempotenz (BR-017):** gleicher Hash ⇒ kein neuer Dispatch, nur Divergenz-Ausweis. |
 
@@ -152,6 +153,7 @@ last30days-Store  soft◄── ra_run.l30d_source_ref, ra_milestone.watch_ref  
 - **BR-018** — Die App **verändert niemals** last30days-Plugin-Tabellen (kein Fremdschema-Umbau). Referenzen auf last30days sind ausschließlich **weiche externe Schlüssel** (kein FK über Schemagrenzen).
 - **BR-019** — **Nebenläufigkeit:** Ein Lauf auf einem Thema erfordert das Halten der Themen-Serialisierungssperre (`ra_topic_lock`). Zwei gleichzeitige In-Flight-Läufe auf **dasselbe** Thema sind verboten.
 - **BR-020** — **Wiedervorlage** erfolgt nur für Themen im Status `geparkt` mit erfülltem Meilenstein bzw. erkanntem Delta; `verworfen`-Themen werden nie wiedervorgelegt (folgt aus BR-005).
+- **BR-021** — **Manuelle Vault-Änderung (AC6):** `ra_pm_dispatch.artifact_hash` speichert den vom PM-Handoff-Aufrufer berechneten Inhalts-Hash des Vault-Artefakts zum Dispatch-Zeitpunkt. Der nächste PM-Anstoss auf dasselbe Thema vergleicht den aktuellen Inhalts-Hash der Vorlauf-Artefakt-Datei dagegen, **bevor** sie überschrieben wird — eine Abweichung signalisiert eine manuelle Bearbeitung im Obsidian-Vault und löst eine Rückfrage aus statt stillem Überschreiben. Leerer `artifact_hash` (Alt-Dispatch vor S-020) bedeutet „kein Hash bekannt" — der Vergleich entfällt dann ersatzlos, kein falscher Mismatch-Alarm.
 
 ## 5. Ergebnisstand-Hash — Bildungsregel (BR-009)
 

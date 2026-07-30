@@ -1,0 +1,23 @@
+-- 009_ra_pm_dispatch_artifact_hash.sql
+-- ra_pm_dispatch: neue Spalte artifact_hash fuer AC6 (Manuelle Vault-Aenderung
+-- -- Hash-Mismatch gegen den erwarteten Vorlauf-Stand loest eine Rueckfrage
+-- aus statt still zu ueberschreiben), Story S-020.
+-- Quelle: docs/specs/gate-pm-anstoss.md AC6 ("AC6 -- Technischer Mechanismus");
+-- docs/data-model.md §2.6 (Feldliste), §4 BR-021.
+--
+-- Forward-only (sqlite/R06): diese Datei nach dem ersten Apply NIE mehr editieren.
+--
+-- artifact_hash speichert den vom Aufrufer (der agentischen Claude-Session,
+-- die den Vault-Lesezugriff hat -- orchestrator.sh selbst hat KEINEN
+-- Vault-Pfad-Zugriff, ADR-009) berechneten Inhalts-Hash des PM-Artefakts zum
+-- Dispatch-Zeitpunkt. Der naechste PM-Anstoss auf dasselbe Thema vergleicht
+-- den AKTUELLEN Inhalts-Hash der Vorlauf-Artefakt-Datei gegen diesen
+-- gespeicherten Wert, BEVOR pm-skills sie ueberschreibt
+-- (pm_dispatch.sh#get_latest_pm_dispatch + orchestrator.sh#check_artifact_hash)
+-- -- eine Abweichung signalisiert eine manuelle Bearbeitung im Obsidian-Vault.
+--
+-- NOT NULL DEFAULT '': Alt-Dispatches (vor S-020) haben keinen bekannten Hash;
+-- ein leerer String bedeutet "kein Hash bekannt" -- der Vergleich wird dann
+-- uebersprungen statt einen falschen Mismatch-Alarm auszuloesen.
+
+ALTER TABLE ra_pm_dispatch ADD COLUMN artifact_hash TEXT NOT NULL DEFAULT '';
