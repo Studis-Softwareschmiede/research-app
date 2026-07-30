@@ -205,7 +205,7 @@ research-app/
 - **Divergenz reproduzierbar:** deterministisch über strukturierte Felder (BR-106).
 - **Boundary-Konformität:** die drei Zugriffsgrenzen (SQLite/last30days/Vault) werden nur von den zuständigen Komponenten überschritten — Review-Blocker.
 - **Anzeige serverlos + offline:** `app/index.html` per Doppelklick geöffnet rendert das Portfolio ohne Netzwerk und ohne zusätzlichen Prozess (Smoke: WLAN aus, kein Terminal-Vorlauf) — UI-C1/UI-C2.
-- **Anzeige schreibfrei:** kein Schreib-Statement und kein Rückschreiben der DB-Datei im Anzeige-Code (`grep` auf `INSERT|UPDATE|DELETE|CREATE|DROP` in `app/` bleibt leer) — UI-C4.
+- **Anzeige schreibfrei:** kein Schreib-Statement und kein Rückschreiben der DB-Datei im Anzeige-Code (`grep` auf `INSERT|UPDATE|DELETE|CREATE|DROP` in `app/assets/` bleibt leer — `app/tests/` ist bewusst ausgenommen, dort erzeugen Test-Fixtures per `sqlite3`-CLI gültige SQL-DDL/DML) — UI-C4.
 - **Kostenkontrolle:** kein headless-Lauf ohne Kostenlimit.
 - **Kopplungsminimierung:** keine Abhängigkeit vom **internen** last30days-Schema (nur JSON-Emit + externer Schlüssel).
 

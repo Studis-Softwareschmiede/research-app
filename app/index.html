@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>research-app — Anzeige</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>research-app</h1>
+  </header>
+
+  <main class="app-main">
+    <section class="panel" aria-labelledby="picker-heading">
+      <h2 id="picker-heading">Datenbank laden</h2>
+      <p>
+        Lies deine <code>research-app.sqlite</code> direkt und lokal ein — die Datei wird nie
+        verändert oder hochgeladen, nur als Lesekopie im Browser-Speicher geöffnet.
+      </p>
+      <div class="file-picker">
+        <label for="db-file">SQLite-Datei (research-app.sqlite):</label>
+        <input type="file" id="db-file" accept=".sqlite,.db,.sqlite3">
+        <button type="button" id="reload-button" class="button" hidden>Datei erneut auswählen</button>
+      </div>
+      <p id="error-region" class="error-message" role="alert" hidden></p>
+    </section>
+
+    <div id="state-region" class="state-region"></div>
+  </main>
+
+  <script src="vendor/sql-asm.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>
