@@ -1,6 +1,7 @@
 id: F-006
-title: 'Anzeige-Ebene (M5)'
-goal: 'Eigenstaendige HTML/JS-Anzeige (M5, zuletzt): Portfolio, Verlauf, Divergenz-Ansicht und klickbare Gates als Lesemodell ueber der Datenschicht. Gebaut erst nach M1-M4.'
+title: Anzeige-Ebene (M5)
+goal: 'Eigenstaendige HTML/JS-Anzeige (M5, zuletzt): Portfolio, Verlauf, Divergenz-Ansicht
+  und klickbare Gates als Lesemodell ueber der Datenschicht. Gebaut erst nach M1-M4.'
 status: Backlog
 priority: P2
 spec: docs/specs/anzeige-portfolio.md
@@ -13,7 +14,11 @@ depends:
 - F-005
 owner: null
 area: anzeige
-stories: null
-progress: null
+stories:
+- S-021
+- S-022
+- S-023
+- S-024
+progress: 0/4 done
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-30T00:30:37Z'

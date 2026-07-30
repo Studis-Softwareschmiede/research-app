@@ -1,6 +1,8 @@
 id: F-003
-title: '/research-Skill (M2)'
-goal: 'Projekt-lokaler /research-Skill (M2): orchestriert last30days in beiden Modi, SWOT-Judge mit Deep-Research-Pass, begruendete Empfehlung, Voraussetzungs-Ueberblick — persistiert ueber die Datenschicht.'
+title: /research-Skill (M2)
+goal: 'Projekt-lokaler /research-Skill (M2): orchestriert last30days in beiden Modi,
+  SWOT-Judge mit Deep-Research-Pass, begruendete Empfehlung, Voraussetzungs-Ueberblick
+  — persistiert ueber die Datenschicht.'
 status: Backlog
 priority: P1
 spec: docs/specs/research-skill.md
@@ -10,7 +12,12 @@ depends:
 - F-002
 owner: null
 area: research-logik
-stories: null
-progress: null
+stories:
+- S-007
+- S-008
+- S-009
+- S-010
+- S-011
+progress: 4/5 done · 1 in progress
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-30T00:30:36Z'

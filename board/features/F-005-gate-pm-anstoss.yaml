@@ -1,6 +1,8 @@
 id: F-005
-title: 'Entscheidungs-Gate & PM-Anstoss (M4)'
-goal: 'Manuelles Entscheidungs-Gate + idempotenter PM-Anstoss (M4): explizite Wahl, PM-Artefakte via pm-skills in den Vault, Uebergabe an agent-flow (pm-import), Idempotenz per ID+Hash mit Divergenz-Ausweis.'
+title: Entscheidungs-Gate & PM-Anstoss (M4)
+goal: 'Manuelles Entscheidungs-Gate + idempotenter PM-Anstoss (M4): explizite Wahl,
+  PM-Artefakte via pm-skills in den Vault, Uebergabe an agent-flow (pm-import), Idempotenz
+  per ID+Hash mit Divergenz-Ausweis.'
 status: Backlog
 priority: P1
 spec: docs/specs/gate-pm-anstoss.md
@@ -11,7 +13,12 @@ depends:
 - F-003
 owner: null
 area: research-logik
-stories: null
-progress: null
+stories:
+- S-016
+- S-017
+- S-018
+- S-019
+- S-020
+progress: 5/5 done
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-30T00:30:36Z'

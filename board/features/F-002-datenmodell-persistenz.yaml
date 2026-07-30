@@ -1,6 +1,8 @@
 id: F-002
-title: 'Datenmodell & Persistenz (M1)'
-goal: 'SQLite-Fundament der Research App (M1, verbindlich zuerst): stabile Themen-IDs, versionierte Laeufe mit deterministischem Hash, berechnete Divergenz, meilenstein-gekoppelte Zustaende, Migrationen und Nebenlaeufigkeit. Basis fuer alle weiteren Meilensteine.'
+title: Datenmodell & Persistenz (M1)
+goal: 'SQLite-Fundament der Research App (M1, verbindlich zuerst): stabile Themen-IDs,
+  versionierte Laeufe mit deterministischem Hash, berechnete Divergenz, meilenstein-gekoppelte
+  Zustaende, Migrationen und Nebenlaeufigkeit. Basis fuer alle weiteren Meilensteine.'
 status: Backlog
 priority: P0
 spec: docs/specs/research-datenmodell.md
@@ -9,7 +11,13 @@ labels: null
 depends: null
 owner: null
 area: datenschicht
-stories: null
-progress: null
+stories:
+- S-001
+- S-002
+- S-003
+- S-004
+- S-005
+- S-006
+progress: 6/6 done
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-26T20:00:00Z'
+updated_at: '2026-07-30T00:30:36Z'
