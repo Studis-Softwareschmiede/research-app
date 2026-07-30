@@ -1,10 +1,13 @@
 /* research-app — Anzeige-Ebene, Lesemodell-Grundgerüst + Portfolio-Ansicht
-   (S-021 AC4/AC5, S-022 AC1) + Verlauf & Divergenz-Ansicht (S-023 AC2).
+   (S-021 AC4/AC5, S-022 AC1) + Verlauf & Divergenz-Ansicht (S-023 AC2) +
+   Klickbare/kopierbare Gates (S-024 AC3, ADR-011).
    Klassisches Script (kein type="module", UI-C2) — läuft unter file://.
    Öffnet die vom Nutzer gewählte SQLite-Datei als In-Memory-Lesekopie
    (window.initSqlJs aus app/vendor/sql-asm.js) und führt ausschliesslich
    SELECT-Abfragen aus (UI-C4). Kein ATTACH der last30days-DB (UI-C5). Liest
-   die Divergenz aus ra_divergence, berechnet sie nie selbst (Verträge). */
+   die Divergenz aus ra_divergence, berechnet sie nie selbst (Verträge). Die
+   Gate-Aktion (AC3) schreibt selbst nichts — sie zeigt nur den fertigen
+   Schicht-1-Befehl zum Kopieren (ADR-011). */
 
 (function () {
   "use strict";
@@ -373,6 +376,115 @@
     return rows[0] || null;
   }
 
+  function fetchTopicLock(db, topicId) {
+    var rows = queryRows(db, "SELECT holder, expires_at FROM ra_topic_lock WHERE topic_id = ?", [topicId]);
+    return rows[0] || null;
+  }
+
+  // isLockActive (AC3/E2) — ein ra_topic_lock-Eintrag ist nur relevant,
+  // solange expires_at noch nicht erreicht ist (Stale-Lock-Schutz,
+  // data-model.md §2.7); ein abgelaufener Lock blockiert das Gate nicht.
+  function isLockActive(lock) {
+    if (!lock) {
+      return false;
+    }
+    var expires = new Date(lock.expires_at.replace(" ", "T") + "Z");
+    if (isNaN(expires.getTime())) {
+      return false;
+    }
+    return expires.getTime() > Date.now();
+  }
+
+  // legacyCopyTextToClipboard — Fallback, falls die Clipboard-API (Secure-
+  // Context-abhängig) unter file:// nicht verfügbar ist.
+  function legacyCopyTextToClipboard(text) {
+    var textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand("copy");
+    } catch (err) {
+      // Kopieren nicht möglich — der Befehlstext bleibt sichtbar zum
+      // manuellen Markieren/Kopieren stehen.
+    }
+    document.body.removeChild(textarea);
+  }
+
+  function copyTextToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(function () {
+        legacyCopyTextToClipboard(text);
+      });
+    } else {
+      legacyCopyTextToClipboard(text);
+    }
+  }
+
+  // renderGateSection (AC3, ADR-011) — „bedienbar" heisst „kopierbar": zeigt
+  // den fertigen orchestrator.sh dispatch_pm_anstoss-Befehl (Thema-/Lauf-
+  // Kontext vorausgefüllt) mit Kopieren-Button. Kein Auto-Submit, keine
+  // Aktion, die selbst schreibt — die Ausführung bleibt Schicht 1
+  // (gate-pm-anstoss.md#AC2). <artifact-ref> bleibt bewusst Platzhalter: die
+  // Anzeige kennt die Vault-Pfad-Referenz nicht, sie entsteht erst durch den
+  // (weiterhin manuellen) Skill-Dispatch-Schritt. „Warten" ist der
+  // Nicht-Klick (anzeige-portfolio#AC3) — kein Gegenstück-Button nötig.
+  function renderGateSection(topic, latestRun, lock) {
+    var section = document.createElement("div");
+    section.className = "gate-section";
+
+    var heading = document.createElement("h3");
+    heading.textContent = "Entscheidungs-Gate";
+    section.appendChild(heading);
+
+    if (isLockActive(lock)) {
+      section.appendChild(mutedNote("Lauf läuft — Gate vorübergehend nicht bedienbar (E2)."));
+      return section;
+    }
+
+    section.appendChild(
+      mutedNote(
+        "Empfehlung 'weiterverfolgen' erreicht: Befehl kopieren und im Terminal ausführen, um den PM-Anstoss über die bestehende Schicht-1-Schnittstelle zu starten (gate-pm-anstoss.md#AC2) — oder warten (kein Klick nötig)."
+      )
+    );
+
+    var commandText =
+      "skills/research/scripts/orchestrator.sh dispatch_pm_anstoss " + topic.id + " " + latestRun.id + " <artifact-ref>";
+
+    var commandRow = document.createElement("div");
+    commandRow.className = "gate-command-row";
+
+    var code = document.createElement("code");
+    code.className = "gate-command";
+    code.textContent = commandText;
+    commandRow.appendChild(code);
+
+    var copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.className = "button button-secondary gate-copy-button";
+    copyButton.textContent = "Kopieren";
+    copyButton.addEventListener("click", function () {
+      copyTextToClipboard(commandText);
+      copyButton.textContent = "Kopiert!";
+      setTimeout(function () {
+        copyButton.textContent = "Kopieren";
+      }, 2000);
+    });
+    commandRow.appendChild(copyButton);
+
+    section.appendChild(commandRow);
+    section.appendChild(
+      mutedNote(
+        "Aus dem Projekt-Repo-Root ausführen; <artifact-ref> vor der Ausführung durch die Vault-Pfad-Referenz aus dem Skill-Dispatch ersetzen (gate-pm-anstoss.md#AC2, Schritt 1)."
+      )
+    );
+
+    return section;
+  }
+
   function findRunById(runs, id) {
     for (var i = 0; i < runs.length; i++) {
       if (runs[i].id === id) {
@@ -677,6 +789,13 @@
     stamp.className = "timestamp";
     stamp.textContent = "Stand: " + loadedAt.toLocaleString();
     panel.appendChild(stamp);
+
+    // Entscheidungs-Gate (AC3) — nur wenn der neueste Lauf 'weiterverfolgen'
+    // empfiehlt (deckungsgleich mit orchestrator.sh#print_gate_prompt).
+    if (topic && runs.length > 0 && runs[0].recommendation === "weiterverfolgen") {
+      var lock = fetchTopicLock(db, topicId);
+      panel.appendChild(renderGateSection(topic, runs[0], lock));
+    }
 
     var historyHeading = document.createElement("h3");
     historyHeading.textContent = "Lauf-Verlauf";

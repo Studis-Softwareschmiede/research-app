@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Smoke-Test — Anzeige-Ebene Grundgerüst + Lesemodell (S-021) + Portfolio-Ansicht
-// (S-022) + Verlauf & Divergenz-Ansicht (S-023).
+// (S-022) + Verlauf & Divergenz-Ansicht (S-023) + Klickbare/kopierbare Gates
+// (S-024, AC3, ADR-011).
 // Treibt echtes, headless Chrome per Chrome DevTools Protocol (CDP) gegen
 // app/index.html unter file:// (UI-C2) und prüft AC1/AC2/AC4/AC5 end-to-end.
 // Keine npm-Abhängigkeit (nur Node-Builtins: fetch/WebSocket/child_process/
@@ -36,8 +37,14 @@
 // Lesen), AC5 (Stack — lädt per file:// ohne Netzwerk-Request ausserhalb von
 // file://, kein ES-Modul/`type="module"` nötig für die Ausführung dieses
 // Tests selbst — der Browser-Code bleibt klassisches Script, s.
-// app/assets/app.js). AC3 ist nicht Teil dieser Story (Gate-Aktion, blockiert
-// auf ADR-011) und daher hier nicht getestet.
+// app/assets/app.js), AC3 (Klickbare/kopierbare Gates — Gate-Bereich
+// erscheint im Thema-Detail nur, wenn der neueste Lauf 'weiterverfolgen'
+// empfiehlt [Thema/Lauf-ID vorausgefüllt im `orchestrator.sh
+// dispatch_pm_anstoss`-Befehl, `<artifact-ref>`-Platzhalter unverändert],
+// bleibt aus bei anderer Empfehlung [parken], Kopieren-Button bestätigt den
+// Kopiervorgang ohne selbst zu schreiben, E2 — aktiver `ra_topic_lock` zeigt
+// „Lauf läuft"-Hinweis statt Befehl, ein abgelaufener Lock blockiert das
+// Gate nicht).
 
 import { spawn, execFileSync } from "node:child_process";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
@@ -102,12 +109,14 @@ async function main() {
   const historyDb = join(fixtureDir, "history.sqlite");
   const singleRunDb = join(fixtureDir, "single-run.sqlite");
   const pmHistoryDb = join(fixtureDir, "pm-history.sqlite");
+  const gateDb = join(fixtureDir, "gate.sqlite");
 
   const RA_SCHEMA =
     "CREATE TABLE ra_topic (id TEXT PRIMARY KEY, title TEXT, status TEXT, updated_at TEXT); " +
     "CREATE TABLE ra_run (id INTEGER PRIMARY KEY, topic_id TEXT, kind TEXT, version INTEGER, recommendation TEXT, momentum_only INTEGER, created_at TEXT); " +
     "CREATE TABLE ra_milestone (id INTEGER PRIMARY KEY, topic_id TEXT, description TEXT, status TEXT, created_at TEXT); " +
-    "CREATE TABLE ra_divergence (id INTEGER PRIMARY KEY, topic_id TEXT, kind TEXT, from_run_id INTEGER, to_run_id INTEGER, is_empty INTEGER, recommendation_changed INTEGER, swot_delta TEXT, milestone_status_delta TEXT, computed_at TEXT); ";
+    "CREATE TABLE ra_divergence (id INTEGER PRIMARY KEY, topic_id TEXT, kind TEXT, from_run_id INTEGER, to_run_id INTEGER, is_empty INTEGER, recommendation_changed INTEGER, swot_delta TEXT, milestone_status_delta TEXT, computed_at TEXT); " +
+    "CREATE TABLE ra_topic_lock (topic_id TEXT PRIMARY KEY, holder TEXT, acquired_at TEXT, expires_at TEXT); ";
 
   execFileSync("sqlite3", [
     validDb,
@@ -166,6 +175,17 @@ async function main() {
       "'{\"added\":[[\"opportunity\",\"pm_vorlauf_test\"]],\"removed\":[],\"by_category\":{\"opportunity\":{\"added\":1,\"removed\":0}}}'," +
       "NULL," +
       "'2026-06-10 08:00:01');",
+  ]);
+
+  execFileSync("sqlite3", [
+    gateDb,
+    RA_SCHEMA +
+      "INSERT INTO ra_topic VALUES ('g1','Gesperrtes Gate-Thema','aktiv','2026-07-25 08:00:00'); " +
+      "INSERT INTO ra_run (id, topic_id, kind, version, recommendation, momentum_only, created_at) VALUES (10,'g1','recherche',1,'weiterverfolgen',0,'2026-07-25 08:00:00'); " +
+      "INSERT INTO ra_topic_lock (topic_id, holder, acquired_at, expires_at) VALUES ('g1','research','2026-07-25 08:00:00','2099-01-01 00:00:00'); " +
+      "INSERT INTO ra_topic VALUES ('g2','Freies Gate-Thema mit abgelaufenem Lock','aktiv','2026-07-24 08:00:00'); " +
+      "INSERT INTO ra_run (id, topic_id, kind, version, recommendation, momentum_only, created_at) VALUES (11,'g2','recherche',1,'weiterverfolgen',0,'2026-07-24 08:00:00'); " +
+      "INSERT INTO ra_topic_lock (topic_id, holder, acquired_at, expires_at) VALUES ('g2','research','2020-01-01 08:00:00','2020-01-01 08:30:00');",
   ]);
 
   const validBefore = sha256(await readFile(validDb));
@@ -384,6 +404,23 @@ async function main() {
       enterNavHeading === "Verlaufs-Thema"
     );
 
+    const gateCommand = await evalExpr(
+      "(function(){var code=document.querySelector('.gate-command');return code ? code.textContent : null;})()"
+    );
+    check(
+      "AC3",
+      "Gate-Befehl erscheint, wenn der neueste Lauf 'weiterverfolgen' empfiehlt, mit Themen-/Lauf-ID vorausgefüllt",
+      gateCommand === "skills/research/scripts/orchestrator.sh dispatch_pm_anstoss h1 2 <artifact-ref>"
+    );
+
+    const gateCopyResult = await evalExpr(
+      "(function(){var btn=document.querySelector('.gate-copy-button');" +
+        "if(!btn) return null;" +
+        "btn.click();" +
+        "return btn.textContent;})()"
+    );
+    check("AC3", "Kopieren-Button bestätigt den Kopiervorgang, ohne selbst zu schreiben", gateCopyResult === "Kopiert!");
+
     const timelineLabels = await evalExpr(
       "Array.from(document.querySelectorAll('.run-timeline-item')).map(function(li){return li.textContent;})"
     );
@@ -472,6 +509,13 @@ async function main() {
       singleRunNote.indexOf("mindestens zwei Läufe") !== -1
     );
 
+    const noGateSection = await evalExpr("!!document.querySelector('.gate-section')");
+    check(
+      "AC3",
+      "Kein Gate-Bereich, wenn der neueste Lauf nicht 'weiterverfolgen' empfiehlt (parken)",
+      noGateSection === false
+    );
+
     await evalExpr("document.getElementById('nav-portfolio').click()");
 
     await selectFile(pmHistoryDb);
@@ -498,6 +542,37 @@ async function main() {
       "Divergenz-Panel zeigt für dieses Recherche-Laufpaar echte Daten statt 'keine Divergenz-Daten'",
       pmHistoryDefault.panelText.indexOf("Keine Divergenz-Daten für diese Kombination") === -1 &&
         pmHistoryDefault.addedText.indexOf("+ opportunity: pm_vorlauf_test") !== -1
+    );
+
+    await evalExpr("document.getElementById('nav-portfolio').click()");
+
+    await selectFile(gateDb);
+    await evalExpr("document.querySelector('.portfolio-table tbody tr').click()");
+    await new Promise((r) => setTimeout(r, 300));
+    const lockedGate = await evalExpr(
+      "(function(){var section=document.querySelector('.gate-section');" +
+        "return {" +
+        "text: section ? section.textContent : ''," +
+        "hasCommand: !!document.querySelector('.gate-command')" +
+        "};})()"
+    );
+    check(
+      "AC3",
+      "E2 — gesperrtes Thema (aktiver ra_topic_lock) zeigt Hinweis statt Befehl",
+      lockedGate.text.indexOf("Lauf läuft") !== -1 && lockedGate.hasCommand === false
+    );
+
+    await evalExpr("document.getElementById('nav-portfolio').click()");
+    await new Promise((r) => setTimeout(r, 200));
+    await evalExpr("document.querySelectorAll('.portfolio-table tbody tr')[1].click()");
+    await new Promise((r) => setTimeout(r, 300));
+    const staleLockGate = await evalExpr(
+      "(function(){var code=document.querySelector('.gate-command');return code ? code.textContent : null;})()"
+    );
+    check(
+      "AC3",
+      "Abgelaufener ra_topic_lock blockiert das Gate nicht — Befehl erscheint normal",
+      staleLockGate === "skills/research/scripts/orchestrator.sh dispatch_pm_anstoss g2 11 <artifact-ref>"
     );
 
     check("AC4", "kein unbehandelter Laufzeitfehler während aller Ladevorgänge", consoleErrors.length === 0);
