@@ -2,7 +2,7 @@ id: S-009
 parent: F-003
 title: 'Zweite Evidenzquelle: Deep-Research-Pass fuer Fundamentals, Momentum-Signal-Markierung
   bei Fehlen'
-status: In Progress
+status: Blocked
 priority: P1
 spec: docs/specs/research-skill.md
 implements:
@@ -12,7 +12,7 @@ depends:
 labels: null
 size_est: M
 dispo_est: null
-dispo_act: null
+dispo_act: '9'
 dispo_forecast: null
 estimate_note: 'Cold-Start: keine baseline.json unter .claude/metrics/ (leer) -> dispo_est/tok_est
   null, confidence low. Heuristik: n_ac=1 (AC3) + n_comp=3 (Deep-Research-Invocation,
@@ -21,10 +21,11 @@ confidence: low
 tok_est: null
 branch: feat/S-009-zweite-evidenzquelle-deep-research-pass-fuer-fundamentals-mo
 pr: null
-blocked_reason: null
+blocked_reason: Gate-Text uneindeutig — manuelle Klärung nötig
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
-updated_at: '2026-07-30T00:31:22Z'
+updated_at: '2026-07-30T00:46:02Z'
 done_at: null
 claimed_by: MacBook-Pro-von-Alexander.local-50694-1785371480-23632
 claimed_at: '2026-07-30T00:31:21Z'
+tok: '170515008'
