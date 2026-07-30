@@ -26,6 +26,14 @@
 # <run-id>` ist der reachability-Pfad, AC2-Bewertung selbst -- claim_key-
 # Vokabular/E2-Zurueckweisung, UNIQUE/CASCADE -- wird in
 # db_scripts/tests/run_tests.sh getestet, hier NUR die Anzeige-Verdrahtung),
+# AC3 (Deep-Research-Pass als zweite Evidenzquelle, S-009: der Pass selbst ist
+# rein agentisch (Claude, SKILL.md, Owner-Entscheid a-3, kein last30days-/
+# CLI-Aufruf, analog ADR-009 nicht als Bash-Funktion abbildbar) --
+# unit-testbar ist hier nur die bereits bestehende Persistenz-/Anzeige-Seite:
+# create_run legt einen Lauf mit has_deep_research=0/momentum_only=1 normal an
+# (rc=0, kein hartes Blocking, BR-014), print_recommendation markiert ihn
+# sichtbar als Momentum-Signal; die BR-014-"gdw."-Konsistenzpruefung selbst ist
+# in db_scripts/tests/run_tests.sh#"research-datenmodell#AC2,BR-014" getestet),
 # AC4 (Empfehlungs-Kopplung, S-010: orchestrator.sh#derive_recommendation --
 # deterministische Ableitung aus dem Meilenstein-Status (data-model.md §8,
 # S-010-Praezisierung): >=1 offener externer Meilenstein -> parken, sonst ->
@@ -745,15 +753,18 @@ else
   bad "erwartete Empfehlung + Businessplan-Template, bekam: $REC_WV_OUT"
 fi
 
+echo "== @trace research-skill#AC3,BR-014 -- fehlender Deep-Research-Pass (has_deep_research=0/momentum_only=1): Lauf-Anlage gelingt normal, Empfehlung sichtbar als Momentum-Signal markiert, KEIN hartes Blocking =="
 HASH9_PARK="$(compute_result_hash "parken" "" "" 2>/dev/null)"
-RUN9_PARK="$(create_run "$DB9" "$TOPIC9" "recherche" "$HASH9_PARK" "parken" 0 1)"
+RUN9_PARK_RC=0
+RUN9_PARK="$(create_run "$DB9" "$TOPIC9" "recherche" "$HASH9_PARK" "parken" 0 1)" || RUN9_PARK_RC=$?
 RUN9_PARK_ID="${RUN9_PARK%%|*}"
 REC_PARK_OUT="$(print_recommendation "$DB9" "$RUN9_PARK_ID")"
-if echo "$REC_PARK_OUT" | grep -q "Empfehlung: parken (Momentum-Signal" \
+if [ "$RUN9_PARK_RC" -eq 0 ] && [ -n "$RUN9_PARK_ID" ] \
+  && echo "$REC_PARK_OUT" | grep -q "Empfehlung: parken (Momentum-Signal -- kein Deep-Research-Pass, BR-014)" \
   && ! echo "$REC_PARK_OUT" | grep -q "Businessplan-Template"; then
-  ok "recommendation='parken' + momentum_only=1: Momentum-Hinweis, KEIN Businessplan-Template (coder/R01, BR-107 nur bei weiterverfolgen)"
+  ok "has_deep_research=0/momentum_only=1: create_run legt den Lauf trotz fehlendem Deep-Research-Pass normal an (rc=0, kein hartes Blocking, AC3), print_recommendation markiert die Empfehlung sichtbar als Momentum-Signal, KEIN Businessplan-Template (coder/R01, BR-107 nur bei weiterverfolgen)"
 else
-  bad "erwartete Momentum-Hinweis ohne Businessplan-Template, bekam: $REC_PARK_OUT"
+  bad "erwartete rc=0 + Momentum-Hinweis ohne Businessplan-Template, bekam: rc=$RUN9_PARK_RC out='$REC_PARK_OUT'"
 fi
 
 echo "== @trace research-skill#AC2,gate-pm-anstoss#AC1 -- render_evaluation/main('evaluation'): SWOT + Empfehlung + Gate als ein Block =="

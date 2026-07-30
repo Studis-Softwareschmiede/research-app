@@ -1,24 +1,28 @@
 ---
 name: research
-description: Orchestriert eine Themen-Recherche fuer research-app (Discovery- oder Thema-Modus, last30days-Aufruf, Persistenz ueber die Data-Access-Schicht, Voraussetzungs-Ueberblick mit Meilenstein-Liste, strukturierte SWOT-Bewertung + deterministisch abgeleitete Empfehlung + Businessplan-Template + manuelles Entscheidungs-Gate). M2-Grundgeruest (S-007) + Voraussetzungs-Ueberblick (S-011) + Bewertungsschicht (S-008) + Empfehlungs-Kopplung (S-010) + Entscheidungs-Gate (S-016) -- Deep-Research folgt in S-009.
+description: Orchestriert eine Themen-Recherche fuer research-app (Discovery- oder Thema-Modus, last30days-Aufruf, Persistenz ueber die Data-Access-Schicht, Voraussetzungs-Ueberblick mit Meilenstein-Liste, strukturierte SWOT-Bewertung inkl. Deep-Research-Pass als zweite Evidenzquelle + deterministisch abgeleitete Empfehlung + Businessplan-Template + manuelles Entscheidungs-Gate). M2-Grundgeruest (S-007) + Voraussetzungs-Ueberblick (S-011) + Bewertungsschicht (S-008) + Empfehlungs-Kopplung (S-010) + Deep-Research-Pass (S-009) + Entscheidungs-Gate (S-016).
 ---
 
 # /research — Skill-Grundgerüst (M2, ADR-006)
 
-> Quelle: `docs/specs/research-skill.md` (AC1, AC2, AC4, AC5, AC6, AC7), `docs/architecture.md`
-> (Komponente "Orchestrator"/"Discovery/Ingest"/"Voraussetzungs-Ueberblick"/
-> "SWOT-Judge"/"Recommendation"/"Businessplan-Emitter"). Projekt-lokal unter
-> `skills/research/` (ADR-006) — keine wiederverwendbare Fabrik-Capability.
+> Quelle: `docs/specs/research-skill.md` (AC1, AC2, AC3, AC4, AC5, AC6, AC7),
+> `docs/architecture.md` (Komponente "Orchestrator"/"Discovery/Ingest"/
+> "Voraussetzungs-Ueberblick"/"SWOT-Judge"/"Deep-Research"/"Recommendation"/
+> "Businessplan-Emitter", BR-104). Projekt-lokal unter `skills/research/`
+> (ADR-006) — keine wiederverwendbare Fabrik-Capability.
 
-## Zweck (Grundgerüst-Umfang S-007 + Voraussetzungs-Überblick S-011 + Bewertungsschicht S-008 + Empfehlungs-Kopplung S-010)
+## Zweck (Grundgerüst-Umfang S-007 + Voraussetzungs-Überblick S-011 + Bewertungsschicht S-008 + Empfehlungs-Kopplung S-010 + Deep-Research-Pass S-009)
 
 Startet einen Recherche-Lauf in einem von zwei Modi und legt das dazugehörige
 Thema über die Data-Access-Schicht (`db_scripts/lib/`) an; im Thema-Modus wird
 zusätzlich der aktuelle Voraussetzungs-Überblick (Meilenstein-Liste + fixer
 Schutzrechte-Klärungspunkt) im Brief ausgewiesen (AC5, S-011). Die Empfehlung
 wird deterministisch aus dem Meilenstein-Status abgeleitet (AC4, S-010) statt
-frei vom Judge entschieden. Deep-Research-Pass (AC3) ist **nicht** Teil dieser
-Story — er folgt in S-009.
+frei vom Judge entschieden. Die SWOT zieht zusätzlich zu last30days (Momentum)
+einen Deep-Research-Pass als zweite Evidenzquelle für Fundamentals heran (AC3,
+S-009); fehlt er in einem Lauf, markiert das persistierte `momentum_only=1`
+die Empfehlung sichtbar als Momentum-Signal — ohne den Lauf zu blockieren
+(BR-014).
 
 ## Bewertungsschicht (AC2, S-008)
 
@@ -37,7 +41,24 @@ Schicht:
    passender Vokabular-Begriff für eine wichtige Beobachtung, ist das eine
    Lücke im Vokabular selbst (Spec-Präzisierung/neue Version), kein Grund, den
    Claim wegzulassen oder frei zu benennen.
-2. **Empfehlung ableiten (AC4/BR-013, S-010):** BEVOR der Lauf angelegt wird,
+2. **Deep-Research-Pass — zweite Evidenzquelle für Fundamentals (AC3, S-009,
+   Owner-Entscheid a-3):** last30days liefert die Momentum-Evidenz
+   (`evidence_source=last30days`, aktuelle Marktsignale). Zusätzlich führt
+   Claude selbst — **kein last30days-Aufruf, keine externe CLI** — einen
+   echten Deep-Research-Pass zu den Fundamentals des Themas durch (z. B.
+   Marktgröße/-wachstum, Wettbewerbsstruktur, Technologiereife,
+   Regulierung/Patentschutz — Begriffe aus `RA_CLAIM_VOCABULARY`,
+   `db_scripts/lib/swot_item.sh`), etwa über Recherche-Werkzeuge der eigenen
+   Session (WebSearch/WebFetch) oder fundiertes Modellwissen. Jede daraus
+   gewonnene, belastbare SWOT-Aussage wird mit `evidence_source=deep_research`
+   angelegt (Schritt 5). Liefert dieser Pass in einem Lauf **mindestens einen**
+   `deep_research`-SWOT-Eintrag: `has_deep_research=1`, `momentum_only=0`.
+   Bleibt der Pass in einem Lauf aus oder liefert er keinen belastbaren
+   Fundamentals-Claim (Zeit-/Kostengrenze, Thema zu neu/unklar): `has_deep_research=0`,
+   `momentum_only=1` — **kein hartes Blocking** (BR-014, C-007): der Lauf
+   läuft normal weiter, `print_recommendation` markiert die Empfehlung dann
+   sichtbar als Momentum-Signal.
+3. **Empfehlung ableiten (AC4/BR-013, S-010):** BEVOR der Lauf angelegt wird,
    ruft Claude `skills/research/scripts/orchestrator.sh recommend <topic-id>`
    auf (Env `RA_DB_PATH` wie gewohnt). Der Befehl liefert die deterministisch
    aus dem aktuellen Meilenstein-Status abgeleitete Default-Empfehlung
@@ -49,24 +70,26 @@ Schicht:
    zugänglich, §8) oder eine begründete Owner-Vorgabe überstimmt ihn — jede
    Abweichung vom Default wird im Brief-Freitext explizit begründet (nie
    still).
-3. **Lauf anlegen:** Sobald die SWOT-Items feststehen, bildet Claude den
+4. **Lauf anlegen:** Sobald die SWOT-Items (last30days- **und** ggf.
+   deep_research-Claims aus Schritt 2) feststehen, bildet Claude den
    `<swot-pairs>`-Parameter (`category|claim_key`-Zeilen) und ruft
    `db_scripts/lib/run.sh#compute_result_hash` (mit dem Meilenstein-Stand aus
    `list_milestones`) und danach `create_run <db> <topic-id> recherche
    <result_hash> <recommendation> <has_deep_research> <momentum_only>
-   [l30d_source_ref]` auf — `<recommendation>` ist die in Schritt 2 ermittelte
-   (Default- oder begründet abweichende) Empfehlung. Bis zum Deep-Research-Pass
-   (S-009, AC3) sind `has_deep_research=0`/`momentum_only=1` (Momentum-Signal,
-   BR-014) die konsistente Kombination.
-4. **SWOT-Items am Lauf verankern:** Erst NACH `create_run` (liefert die
-   `run_id`) ruft Claude `create_swot_item` je Claim mit dieser `run_id` auf.
-5. **Businessplan-Template (BR-107):** Ist `recommendation = weiterverfolgen`,
+   [l30d_source_ref]` auf — `<recommendation>` ist die in Schritt 3 ermittelte
+   (Default- oder begründet abweichende) Empfehlung, `<has_deep_research>`/
+   `<momentum_only>` sind die in Schritt 2 ermittelten Werte (AC3, BR-014).
+5. **SWOT-Items am Lauf verankern:** Erst NACH `create_run` (liefert die
+   `run_id`) ruft Claude `create_swot_item` je Claim (last30days **und**
+   deep_research) mit dieser `run_id` auf.
+6. **Businessplan-Template (BR-107):** Ist `recommendation = weiterverfolgen`,
    füllt Claude das im Brief gerenderte Businessplan-Template
    (`orchestrator.sh#print_businessplan_template`) im Freitext aus.
-6. **Brief rendern:** `skills/research/scripts/orchestrator.sh evaluation
-   <run-id>` rendert die SWOT-Zusammenfassung + Empfehlung (inkl.
-   Businessplan-Template bei `weiterverfolgen`) sowie das Entscheidungs-Gate
-   als Teil des Recherche-Briefs.
+7. **Brief rendern:** `skills/research/scripts/orchestrator.sh evaluation
+   <run-id>` rendert die SWOT-Zusammenfassung + Empfehlung (inkl. sichtbarem
+   Momentum-Signal-Hinweis bei `momentum_only=1`, AC3, und Businessplan-Template
+   bei `weiterverfolgen`) sowie das Entscheidungs-Gate als Teil des
+   Recherche-Briefs.
 
 ## Entscheidungs-Gate & PM-Anstoss (AC1+AC2+AC6, `docs/specs/gate-pm-anstoss.md`, S-016+S-017+S-020)
 

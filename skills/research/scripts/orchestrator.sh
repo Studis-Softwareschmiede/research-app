@@ -13,15 +13,20 @@
 # docs/architecture.md
 # "Orchestrator"-Komponente (Einstieg; waehlt Modus, ruft Paesse in
 # Reihenfolge) + "Voraussetzungs-Ueberblick"-Komponente ("Klaerungspunkte
-# inkl. Schutzrechte, kein Rechtsmodul") + "SWOT-Judge"/"Recommendation"/
-# "Businessplan-Emitter"/"Gate"-Komponenten (BR-102: Uebergang nach
-# 'uebergeben'/'im_pm' nur ueber das Gate). Deep-Research (AC3)
-# ist weiterhin NICHT Teil dieser Datei -- sie folgt mit S-009 (separater
-# Scope). Die eigentliche SWOT-Bewertung (Kategorie+claim_key je Claim,
-# create_swot_item) UND die Lauf-Anlage (create_run mit recommendation/
-# has_deep_research/momentum_only) werden -- analog zur Meilenstein-CRUD
-# (S-011) -- vom Skill-Ausfuehrenden (Claude, SKILL.md) waehrend der
-# eigentlichen Recherche aufgerufen, NICHT von diesem Skript selbst berechnet.
+# inkl. Schutzrechte, kein Rechtsmodul") + "SWOT-Judge"/"Deep-Research"/
+# "Recommendation"/"Businessplan-Emitter"/"Gate"-Komponenten (BR-102:
+# Uebergang nach 'uebergeben'/'im_pm' nur ueber das Gate). Deep-Research
+# (AC3/BR-104) ist als eigener Pass rein agentisch (Claude, Owner-Entscheid
+# a-3, SKILL.md) -- analog zu ADR-009 (PM-Handoff) hat dieses Skript dafuer
+# KEINE eigene Funktion: es gibt keinen last30days-/CLI-Aufruf zu orchestrieren,
+# nur die bereits bestehende has_deep_research/momentum_only-Persistenz
+# (create_run, seit S-003/S-004) und deren Anzeige (print_recommendation,
+# seit S-008) zu befuellen bzw. zu rendern. Die eigentliche SWOT-Bewertung
+# (Kategorie+claim_key je Claim, create_swot_item) UND die Lauf-Anlage
+# (create_run mit recommendation/has_deep_research/momentum_only) werden --
+# analog zur Meilenstein-CRUD (S-011) -- vom Skill-Ausfuehrenden (Claude,
+# SKILL.md) waehrend der eigentlichen Recherche aufgerufen, NICHT von diesem
+# Skript selbst berechnet.
 # recommendation ist aber ab S-010 auch KEIN freier Judge-Entscheid mehr:
 # derive_recommendation() bildet den deterministischen Default aus dem
 # Meilenstein-Status (AC4/BR-013, data-model.md §8) -- Claude ruft ihn ueber
@@ -326,8 +331,9 @@ print_businessplan_template() {
 # 'weiterverfolgen' wird zusaetzlich das Businessplan-Template ausgegeben
 # (BR-107). Das momentum_only-Flag existiert bereits als Pflichtspalte seit
 # ra_run (003_ra_run.sql, S-003) -- diese Funktion zeigt nur den vorhandenen
-# Wert an; der Deep-Research-Pass selbst, der ihn befuellt, ist S-009-Scope
-# (AC3) und wird hier NICHT implementiert.
+# Wert an; der Deep-Research-Pass selbst (AC3/BR-104, S-009), der ihn
+# befuellt, ist rein agentisch (Claude, SKILL.md) und hat daher keine eigene
+# Funktion in diesem Skript (siehe Datei-Header).
 print_recommendation() {
   local db="$1"
   local run_id="$2"
