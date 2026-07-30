@@ -2,7 +2,7 @@ id: S-021
 parent: F-006
 title: 'Anzeige-Grundgeruest: HTML/JS-Dashboard, liest research-app.sqlite als Lesemodell,
   kein Schreibpfad'
-status: Blocked
+status: To Do
 priority: P2
 spec: docs/specs/anzeige-portfolio.md
 implements:
@@ -25,10 +25,7 @@ confidence: low
 tok_est: null
 branch: null
 pr: null
-blocked_reason: 'docs/design.md als Entwurf erstellt (owner_approved: null, 5 offene
-  Gestaltungsfragen) -- wartet auf Owner-Design-Freigabe vor dem ersten UI-Build (S-021
-  ist die erste UI-Story). Owner-Aktion noetig, kein weiterer coder-Lauf bis
-  owner_approved gesetzt ist.'
+blocked_reason: null
 abgenommen_at: null
 created_at: '2026-07-26T20:00:00Z'
 updated_at: '2026-07-30T00:56:52Z'

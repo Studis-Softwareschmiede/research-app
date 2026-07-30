@@ -1,12 +1,12 @@
 ---
-owner_approved: null
+owner_approved: '2026-07-30T07:38:06Z'
 ---
 
 # Design-System — research-app (Anzeige-Ebene, M5)
 
-> **Entwurf (Vorschlags-Modus).** Erst nach expliziter Owner-Freigabe (`owner_approved: <ISO-Zeitstempel>`) bindend für den `coder`. Grundlage: [`docs/specs/anzeige-portfolio.md`](specs/anzeige-portfolio.md) (AC1–AC5), [`docs/architecture.md`](architecture.md) (Schicht 3, ADR-007), [`docs/data-model.md`](data-model.md).
+> **Freigegeben** (`owner_approved: 2026-07-30T07:38:06Z`) — bindend für den `coder`. Grundlage: [`docs/specs/anzeige-portfolio.md`](specs/anzeige-portfolio.md) (AC1–AC5), [`docs/architecture.md`](architecture.md) (Schicht 3, ADR-007), [`docs/data-model.md`](data-model.md).
 >
-> **Dieser Lauf war headless** (Owner nicht erreichbar) — offene Gestaltungsfragen sind unten unter „Offene Punkte" dokumentiert statt interaktiv gestellt. Freigabe steht noch aus.
+> Alle fünf offenen Gestaltungsfragen (s. „Offene Punkte") wurden vom Owner mit dem jeweiligen **Standard-Vorschlag** entschieden (keine der Alternativen).
 
 ## Kontext
 
@@ -138,14 +138,12 @@ Zentrierter Block in `<main>`: kurzer Text „Noch keine Recherche-Läufe vorhan
 - **`prefers-reduced-motion`:** `<details>`-Expand und Dialog-Öffnen ohne Bewegungsanimation, oder mit `@media (prefers-reduced-motion: reduce)` abgeschaltet (`css/R03`), falls der coder eine Transition ergänzt.
 - **Farbe nie alleiniges Signal:** durchgängig Text/Icon + Farbe (Status-, Empfehlungs-, Momentum-Badges, Divergenz-Delta) — s. Komponenten oben.
 
-## Offene Punkte (headless-Lauf — Owner nicht erreichbar, zur Freigabe vorzulegen)
+## Entschiedene Gestaltungsfragen (Owner-Freigabe 2026-07-30)
 
-Da dieser Lauf ohne Rückfrage-Möglichkeit stattfand, sind die folgenden Gestaltungsfragen als **Vorschlag mit Alternative** dokumentiert statt interaktiv geklärt. Freigabe (`owner_approved`) steht bis zur Owner-Entscheidung aus.
+Die folgenden fünf Fragen waren beim headless-Entwurfslauf offen (Owner nicht erreichbar) und wurden bei der Freigabe **alle mit dem Standard-Vorschlag** entschieden (keine Alternative gewählt):
 
-1. **Farbrichtung:** Vorschlag „Blau als Grundfarbe" (ruhig, analytisch) — Alternative: rein neutrale Grau-Palette ohne Akzentfarbe.
-2. **Dichte/Weissraum:** Vorschlag „kompakte Tabellen-Dichte" (`--space-3`-Zeilen) für viele Themen auf einen Blick — Alternative: grosszügigere Karten-Darstellung mit mehr Weissraum pro Thema.
-3. **Platzierung Navigation:** Vorschlag „schlankes Menüband oben" (nur zwei Ansichten) — Alternative: Seitenleiste links, falls perspektivisch mehr Ansichten dazukommen.
-4. **Dark Mode:** Vorschlag „nur Light Mode für M5" (KISS, Scope-Minimum) — Alternative: Dark Mode von Anfang an über `light-dark()` (`css/R05`) mitbauen.
-5. **Stilrichtung:** Vorschlag „sachlich-neutrales Analyse-Dashboard" (Datentabellen-fokussiert, wenig Dekoration) — Alternative: freundlicheres Karten-UI mit mehr visueller Auflockerung.
-
-**Freigabe-Frage:** Passt dieser Entwurf so, oder sollen einzelne der obigen Alternativen stattdessen gelten? Erst nach expliziter Antwort wird `owner_approved` gesetzt.
+1. **Farbrichtung:** „Blau als Grundfarbe" (ruhig, analytisch) — entschieden.
+2. **Dichte/Weissraum:** „kompakte Tabellen-Dichte" (`--space-3`-Zeilen) — entschieden.
+3. **Platzierung Navigation:** „schlankes Menüband oben" (nur zwei Ansichten) — entschieden.
+4. **Dark Mode:** „nur Light Mode für M5" (KISS, Scope-Minimum) — entschieden, kein Dark Mode in dieser Story.
+5. **Stilrichtung:** „sachlich-neutrales Analyse-Dashboard" (Datentabellen-fokussiert, wenig Dekoration) — entschieden.
