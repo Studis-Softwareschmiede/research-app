@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Smoke-Test — Anzeige-Ebene Grundgerüst + Lesemodell (S-021).
+// Smoke-Test — Anzeige-Ebene Grundgerüst + Lesemodell (S-021) + Portfolio-Ansicht (S-022).
 // Treibt echtes, headless Chrome per Chrome DevTools Protocol (CDP) gegen
-// app/index.html unter file:// (UI-C2) und prüft AC4/AC5 end-to-end.
+// app/index.html unter file:// (UI-C2) und prüft AC1/AC4/AC5 end-to-end.
 // Keine npm-Abhängigkeit (nur Node-Builtins: fetch/WebSocket/child_process/
 // node:sqlite fehlt hier absichtlich — Fixtures werden über die `sqlite3`-CLI
 // erzeugt, dieselbe Abhängigkeit, die db_scripts/ bereits voraussetzt).
@@ -10,16 +10,23 @@
 // Erfüllt die Spec-Vertragszeile "Tests taggen @trace anzeige-portfolio#AC<n>"
 // (docs/specs/anzeige-portfolio.md "Verträge").
 //
-// Covers (anzeige-portfolio): AC4 (Lesemodell-Boundary — direktes Lesen von
-// research-app.sqlite als In-Memory-Lesekopie, ausschliesslich SELECT,
-// Schnappschuss-Zustand E1/E3 — E3 mit je eigener Fixture pro Teilbedingung:
-// (a) kein gültiges SQLite, (b) gültiges SQLite ohne ra_*-Tabellen —,
-// read-only-by-construction per Byte-Vergleich
-// der Quelldatei vor/nach dem Lesen), AC5 (Stack — lädt per file:// ohne
+// Covers (anzeige-portfolio): AC1 (Portfolio — alle Themen mit Status-Badge
+// inkl. `im_pm` -> "im PM"-Mapping, letzter Bewertung [Empfehlungs-Badge +
+// Momentum-Kennzeichen bei momentum_only=1, "Noch keine Bewertung" ohne Lauf]
+// und offenen Meilensteinen [Zahl + <details>-Expand-Liste, 0 ohne Expand],
+// Zeilen fokussierbar [tabindex-fähig, design.md #Grundkomponenten 4 —
+// Klick-/Enter-Navigation zum Thema-Detail folgt erst mit AC2/S-023] —
+// sortiert nach letzter Aktualisierung absteigend), AC4 (Lesemodell-Boundary —
+// direktes Lesen von research-app.sqlite als In-Memory-Lesekopie,
+// ausschliesslich SELECT, Schnappschuss-Zustand E1/E3 — E3 mit je eigener
+// Fixture pro Teilbedingung: (a) kein gültiges SQLite, (b) gültiges SQLite
+// ohne ra_*-Tabellen —, read-only-by-construction per Byte-Vergleich der
+// Quelldatei vor/nach dem Lesen), AC5 (Stack — lädt per file:// ohne
 // Netzwerk-Request ausserhalb von file://, kein ES-Modul/`type="module"`
 // nötig für die Ausführung dieses Tests selbst — der Browser-Code bleibt
-// klassisches Script, s. app/assets/app.js). AC1–AC3 sind nicht Teil dieser
-// Story (S-021 implementiert nur AC4/AC5) und daher hier nicht getestet.
+// klassisches Script, s. app/assets/app.js). AC2/AC3 sind nicht Teil dieser
+// Story (Verlauf/Divergenz bzw. Gate-Aktion, spätere Stories) und daher hier
+// nicht getestet.
 
 import { spawn, execFileSync } from "node:child_process";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
@@ -80,13 +87,33 @@ async function main() {
   const emptyDb = join(fixtureDir, "empty.sqlite");
   const invalidDb = join(fixtureDir, "invalid.sqlite");
   const noRaTablesDb = join(fixtureDir, "no-ra-tables.sqlite");
+  const portfolioDb = join(fixtureDir, "portfolio.sqlite");
+
+  const RA_SCHEMA =
+    "CREATE TABLE ra_topic (id TEXT PRIMARY KEY, title TEXT, status TEXT, updated_at TEXT); " +
+    "CREATE TABLE ra_run (id INTEGER PRIMARY KEY, topic_id TEXT, recommendation TEXT, momentum_only INTEGER); " +
+    "CREATE TABLE ra_milestone (id INTEGER PRIMARY KEY, topic_id TEXT, description TEXT, status TEXT, created_at TEXT); ";
 
   execFileSync("sqlite3", [
     validDb,
-    "CREATE TABLE ra_topic (id TEXT PRIMARY KEY, title TEXT); " +
-      "INSERT INTO ra_topic VALUES ('t1','Thema Eins');",
+    RA_SCHEMA +
+      "INSERT INTO ra_topic VALUES ('t1','Thema Eins','aktiv','2026-07-20 10:00:00'); " +
+      "INSERT INTO ra_run VALUES (1,'t1','weiterverfolgen',0); " +
+      "INSERT INTO ra_milestone VALUES (1,'t1','Externe Finanzierung sichern','offen','2026-07-20 10:05:00'); " +
+      "INSERT INTO ra_milestone VALUES (2,'t1','Prototyp bauen','offen','2026-07-20 10:06:00'); " +
+      "INSERT INTO ra_milestone VALUES (3,'t1','Altes Ziel','erfuellt','2026-07-20 10:07:00');",
   ]);
-  execFileSync("sqlite3", [emptyDb, "CREATE TABLE ra_topic (id TEXT PRIMARY KEY, title TEXT);"]);
+  execFileSync("sqlite3", [emptyDb, RA_SCHEMA]);
+  execFileSync("sqlite3", [
+    portfolioDb,
+    RA_SCHEMA +
+      "INSERT INTO ra_topic VALUES ('a','Momentum-Thema','geparkt','2026-07-21 09:00:00'); " +
+      "INSERT INTO ra_topic VALUES ('b','PM-Thema','im_pm','2026-07-22 09:00:00'); " +
+      "INSERT INTO ra_topic VALUES ('c','Ohne Bewertung','aktiv','2026-07-19 09:00:00'); " +
+      "INSERT INTO ra_topic VALUES ('d','Verworfenes Thema','verworfen','2026-07-18 09:00:00'); " +
+      "INSERT INTO ra_run VALUES (1,'a','parken',1); " +
+      "INSERT INTO ra_run VALUES (2,'b','weiterverfolgen',0);",
+  ]);
   await (await import("node:fs/promises")).writeFile(invalidDb, "keine echte sqlite-datei\n");
   execFileSync("sqlite3", [
     noRaTablesDb,
@@ -185,9 +212,54 @@ async function main() {
 
     await selectFile(validDb);
     const loadedHeading = await evalExpr("document.querySelector('#state-region h2').textContent");
-    const loadedBody = await evalExpr("document.querySelector('#state-region p').textContent");
-    check("AC4", "gültige research-app.sqlite wird direkt gelesen (In-Memory-Lesekopie)", loadedHeading === "Datenbank geladen");
-    check("AC4", "gelesener Inhalt spiegelt die Fixture-Zeile (1 Thema)", loadedBody.startsWith("1 Thema"));
+    check("AC4", "gültige research-app.sqlite wird direkt gelesen (In-Memory-Lesekopie)", loadedHeading === "Portfolio");
+
+    const validRow = await evalExpr(
+      "(function(){var tr=document.querySelector('.portfolio-table tbody tr');" +
+        "var summary=tr.children[3].querySelector('summary');" +
+        "return {" +
+        "title: tr.children[0].textContent," +
+        "status: tr.children[1].textContent," +
+        "rec: tr.children[2].textContent," +
+        "hasMomentum: !!tr.children[2].querySelector('.badge-momentum')," +
+        "milestoneSummary: summary ? summary.textContent : tr.children[3].textContent," +
+        "updated: tr.children[4].textContent" +
+        "};})()"
+    );
+    check("AC1", "Portfolio-Zeile zeigt den Thema-Namen", validRow.title === "Thema Eins");
+    check("AC1", "Status-Badge zeigt 'aktiv'", validRow.status === "aktiv");
+    check(
+      "AC1",
+      "Empfehlungs-Badge zeigt 'weiterverfolgen' ohne Momentum-Kennzeichen (has_deep_research)",
+      validRow.rec === "weiterverfolgen" && validRow.hasMomentum === false
+    );
+    check(
+      "AC1",
+      "offene Meilensteine gezählt (2 offen, 1 erfüllt ausgeschlossen)",
+      validRow.milestoneSummary === "2 offene Meilensteine"
+    );
+    check("AC1", "letzte Aktualisierung wird angezeigt (nicht leer)", validRow.updated.length > 0);
+
+    const rowTabIndex = await evalExpr(
+      "document.querySelector('.portfolio-table tbody tr').tabIndex"
+    );
+    check(
+      "AC1",
+      "Portfolio-Zeile ist fokussierbar (tabindex-fähig, design.md #Grundkomponenten 4)",
+      rowTabIndex === 0
+    );
+
+    const validMilestoneList = await evalExpr(
+      "Array.from(document.querySelectorAll('.portfolio-table tbody tr:first-child li')).map(function(li){return li.textContent;})"
+    );
+    check(
+      "AC1",
+      "Meilenstein-Expand listet nur offene Meilensteine (kein 'Altes Ziel')",
+      validMilestoneList.length === 2 &&
+        validMilestoneList.includes("Externe Finanzierung sichern") &&
+        validMilestoneList.includes("Prototyp bauen") &&
+        !validMilestoneList.includes("Altes Ziel")
+    );
 
     await selectFile(emptyDb);
     const emptyHeading = await evalExpr("document.querySelector('#state-region h2').textContent");
@@ -207,7 +279,38 @@ async function main() {
     check("AC4", "E3 — gültiges SQLite ohne ra_*-Tabellen: vorheriger Anzeigezustand bleibt unverändert", afterNoRaTablesHeading === "Noch keine Recherche-Läufe vorhanden");
     check("AC4", "E3 — gültiges SQLite ohne ra_*-Tabellen: verständliche Fehlermeldung ohne Fehler-Stack", noRaTablesErrorHidden === false && noRaTablesErrorText.length > 0 && !noRaTablesErrorText.includes("at "));
 
-    check("AC4", "kein unbehandelter Laufzeitfehler während der vier Ladevorgänge", consoleErrors.length === 0);
+    await selectFile(portfolioDb);
+    const portfolioRows = await evalExpr(
+      "Array.from(document.querySelectorAll('.portfolio-table tbody tr')).map(function(tr){" +
+        "return {" +
+        "title: tr.children[0].textContent," +
+        "status: tr.children[1].textContent," +
+        "rec: tr.children[2].textContent," +
+        "hasMomentum: !!tr.children[2].querySelector('.badge-momentum')," +
+        "milestones: tr.children[3].textContent" +
+        "};})"
+    );
+    check(
+      "AC1",
+      "Portfolio sortiert nach letzter Aktualisierung absteigend",
+      portfolioRows.map((r) => r.title).join("|") === "PM-Thema|Momentum-Thema|Ohne Bewertung|Verworfenes Thema"
+    );
+    check("AC1", "Status im_pm wird als 'im PM' angezeigt", portfolioRows[0].status === "im PM");
+    check("AC1", "kein Momentum-Kennzeichen ohne momentum_only=1 (PM-Thema)", portfolioRows[0].hasMomentum === false);
+    check(
+      "AC1",
+      "Momentum-Kennzeichen erscheint bei momentum_only=1",
+      portfolioRows[1].hasMomentum === true && portfolioRows[1].rec.startsWith("parken")
+    );
+    check("AC1", "Thema ohne Lauf zeigt 'Noch keine Bewertung' statt Badge", portfolioRows[2].rec === "Noch keine Bewertung");
+    check("AC1", "Status verworfen wird korrekt angezeigt", portfolioRows[3].status === "verworfen");
+    check(
+      "AC1",
+      "0 offene Meilensteine zeigen die Zahl '0' ohne Expand",
+      portfolioRows.every((r) => r.milestones === "0")
+    );
+
+    check("AC4", "kein unbehandelter Laufzeitfehler während aller Ladevorgänge", consoleErrors.length === 0);
 
     const validAfter = sha256(await readFile(validDb));
     check("AC4", "Read-only by construction — Quelldatei nach dem Lesen byteidentisch (kein Rückschreiben, UI-C4)", validBefore === validAfter);

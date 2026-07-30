@@ -1,6 +1,7 @@
 /* research-app — Anzeige-Ebene, Design-Tokens gemäss docs/design.md (owner-freigegeben).
-   Grundgerüst (S-021, AC5): nur die Tokens/Komponenten, die dieses Gerüst tatsächlich braucht.
-   Weitere Tokens (Status-/Empfehlungs-/Divergenz-Farben) ergänzt die Portfolio-/Verlaufs-Story. */
+   Grundgerüst (S-021, AC5) + Portfolio-Ansicht (S-022, AC1): Status-/Empfehlungs-/
+   Momentum-Tokens und die Portfolio-Tabelle. Divergenz-Delta-Tokens folgen der
+   Verlaufs-/Divergenz-Story (AC2). */
 
 :root {
   /* Neutrals (design.md #Farb-Tokens) */
@@ -13,6 +14,20 @@
   /* Primär / Aktionen */
   --color-primary:      #1D4ED8;
   --color-primary-text: #FFFFFF;
+
+  /* Thema-Status (AC1) */
+  --color-status-aktiv-bg:      #DBEAFE;  --color-status-aktiv-fg:      #1D4ED8;
+  --color-status-geparkt-bg:    #FEF3C7;  --color-status-geparkt-fg:    #92400E;
+  --color-status-im-pm-bg:      #EDE9FE;  --color-status-im-pm-fg:      #6D28D9;
+  --color-status-verworfen-bg:  #E5E7EB;  --color-status-verworfen-fg:  #374151;
+
+  /* Empfehlung (AC1) */
+  --color-rec-weiterverfolgen-bg: #DCFCE7; --color-rec-weiterverfolgen-fg: #166534;
+  --color-rec-parken-bg:          #FEF3C7; --color-rec-parken-fg:          #92400E;
+  --color-rec-verwerfen-bg:       #FEE2E2; --color-rec-verwerfen-fg:       #991B1B;
+
+  /* Momentum-Kennzeichen (AC1, BR-104/momentum_only) */
+  --color-momentum-bg: #E0E7FF; --color-momentum-fg: #3730A3;
 
   /* Zustand / Feedback */
   --color-danger:      #B91C1C;
@@ -138,6 +153,118 @@ body {
   color: var(--color-danger);
   font-weight: 600;
   margin: 0 0 var(--space-4);
+}
+
+.text-muted {
+  color: var(--color-text-muted);
+}
+
+/* Badges (AC1, design.md #Grundkomponenten 2/3) — Text+Farbe immer zusammen (WCAG 1.4.1) */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-status-aktiv      { background: var(--color-status-aktiv-bg);      color: var(--color-status-aktiv-fg); }
+.badge-status-geparkt    { background: var(--color-status-geparkt-bg);    color: var(--color-status-geparkt-fg); }
+.badge-status-im-pm      { background: var(--color-status-im-pm-bg);      color: var(--color-status-im-pm-fg); }
+.badge-status-verworfen  { background: var(--color-status-verworfen-bg);  color: var(--color-status-verworfen-fg); }
+
+.badge-rec-weiterverfolgen { background: var(--color-rec-weiterverfolgen-bg); color: var(--color-rec-weiterverfolgen-fg); }
+.badge-rec-parken          { background: var(--color-rec-parken-bg);          color: var(--color-rec-parken-fg); }
+.badge-rec-verwerfen       { background: var(--color-rec-verwerfen-bg);       color: var(--color-rec-verwerfen-fg); }
+
+.badge-momentum { background: var(--color-momentum-bg); color: var(--color-momentum-fg); }
+
+/* Portfolio-Tabelle (AC1, design.md #Grundkomponenten 4) — @container statt globaler
+   Media Queries (css/R04): Karte auf schmalem Container, Tabellen-Zeile auf breitem. */
+.portfolio-table-wrap {
+  container-type: inline-size;
+  margin-top: var(--space-6);
+}
+
+.portfolio-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.portfolio-table thead {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.portfolio-table tbody tr {
+  display: block;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  cursor: pointer;
+}
+
+.portfolio-table td {
+  display: block;
+  padding: var(--space-1) 0;
+  border: none;
+}
+
+.portfolio-table td[data-label]::before {
+  content: attr(data-label) ": ";
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+@container (min-width: 768px) {
+  .portfolio-table thead {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 0;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+    display: table-header-group;
+    border: 0;
+  }
+
+  .portfolio-table thead th {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .portfolio-table tbody tr {
+    display: table-row;
+    background: none;
+    border: none;
+    margin-bottom: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .portfolio-table td {
+    display: table-cell;
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .portfolio-table td[data-label]::before {
+    content: none;
+  }
 }
 
 :focus-visible {
