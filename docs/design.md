@@ -119,8 +119,8 @@ Vertikale Liste der Läufe (neuester oben) mit Datum, Empfehlung, Momentum-Kennz
 
 Keine eigene Divergenz-Berechnung (`ra_divergence` wird nur gelesen, s. AC4/Verträge).
 
-### 6. Gate-Aktion (AC3)
-Zwei Buttons „PM anstossen" (primär, `--color-primary`) / „Warten" (sekundär, neutral) im Thema-Detail. „PM anstossen" öffnet ein Bestätigungs-`<dialog>` (`html/R08`, `command="show-modal"`) — kein automatischer Trigger (BR-102), da Fehlklicks bei einer nicht-trivialen Aktion (löst Skill-Tool-Dispatch aus) sonst nicht abfangbar wären. Ist das Thema gerade gesperrt (E2, `ra_topic_lock`), ist „PM anstossen" `disabled` + sichtbarer Hinweistext „Lauf läuft" direkt am Button (kein Tooltip-only, da Tooltips oft nicht touch-/tastatur-zugänglich sind).
+### 6. Gate-Aktion (AC3, ADR-011)
+„PM anstossen" ist **kein** Button, der selbst etwas auslöst — pm-skills ist kein CLI-Tool (ADR-009), die Anzeige kann den Handoff nicht selbst starten. Stattdessen: ein Textblock mit dem fertig formulierten **Chat-Auftragstext** (Themen-Titel, Themen-/Lauf-ID) in einem `<pre>`/`<code>`-Element plus einem „Kopieren"-Button (Zwischenablage-API, Fallback `execCommand('copy')` für `file://`-Kompatibilität falls nötig) — der Nutzer fügt den Text in eine Claude-Code-Chat-Session ein. Direkt daneben ein kurzer Hinweistext („Text kopieren und in einer Claude-Code-Session einfügen"). Kein Bestätigungs-Dialog nötig (Kopieren ist folgenlos, keine echte Aktion wird ausgelöst). Ist das Thema gerade gesperrt (E2, `ra_topic_lock`), ist der Kopieren-Button `disabled` + sichtbarer Hinweistext „Lauf läuft" direkt daneben (kein Tooltip-only, da Tooltips oft nicht touch-/tastatur-zugänglich sind). „Warten" ist der Nicht-Klick — kein eigener Button nötig.
 
 ### 7. Leerer Zustand (E1)
 Zentrierter Block in `<main>`: kurzer Text „Noch keine Recherche-Läufe vorhanden" + Handlungsanweisung als Text (welcher Befehl/Skill den ersten Lauf startet — reine Anzeige, kein Auslöse-Button, da AC4 keinen Schreibpfad ausser Gate erlaubt). Kein Fehler-Icon/-Farbe (kein Fehlerzustand, sondern Ausgangszustand) — neutrale Darstellung.
