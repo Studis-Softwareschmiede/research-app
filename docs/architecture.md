@@ -8,8 +8,9 @@
 Drei Schichten, entlang der bindenden Meilenstein-Reihenfolge M1–M6 (C-005). Abhängigkeiten zeigen nach innen (stabiler Kern = Daten): Anzeige kennt die Skill-Logik nicht, die Skill-Logik kennt die Anzeige nicht; beide gehen über die Datenschicht bzw. definierte Verträge.
 
 ```
-Schicht 3  Anzeige-App (M5, SPÄTER)          eigenständige App, Stack OFFEN
+Schicht 3  Anzeige-App (M5)                  eigenständige App, statisches HTML/JS (ADR-007)
              │  liest (read-model)            Portfolio · Verläufe · Divergenz · Gate-Ansicht
+             │  In-Memory-Lesekopie           SQLite-Engine im Browser (ADR-010)
              ▼
 Schicht 2  Datenschicht (M1, ZUERST)         SQLite: last30days --store (read-only Basis)
              ▲  liest/schreibt                 + eigene Bewertungs-Tabellen (single-writer)
@@ -146,14 +147,30 @@ Nur die **Schnittstelle** (Schema-Details entwirft der `dba`):
 - **Persistenz:** SQLite. Basis ist die last30days-`--store`-DB (read-only, ADR-002); die **eigenen Bewertungs-Tabellen** setzen obendrauf und referenzieren last30days-Entitäten über einen **stabilen externen Schlüssel**, nicht über dessen interne Struktur.
 - **Zugriffsvertrag:** ausschliesslich über die **Data-Access**-Komponente (single-writer der Bewertungs-Tabellen, `architecture/R09`).
 - **Muss-Felder für die Skill-Logik** (Ausprägung → dba): stabile Themen-ID (BR-109), versionierter Lauf + Inhalts-Hash (BR-103/006), strukturierte Bewertung (Empfehlung/SWOT/Meilenstein-Status), Meilenstein (Status + Zuständigkeit extern/eigen), Momentum-Flag.
-- **Offen (dba + Owner):** ob die Bewertungs-Tabellen im **selben** DB-File (ATTACH/obendrauf) oder in einem **separaten** File mit Referenz-Schlüssel leben — siehe Offene Fragen F-3.
+- **Physische Topologie (entschieden, ADR-008):** eigenes File `research-app.sqlite` für die Bewertungs-Tabellen; die last30days-`--store`-Datei wird bei Bedarf **read-only ge-ATTACHt**, nie verändert (`data-model.md` OF-03, `research-datenmodell#AC8`).
 
-## Schicht 3 — Anzeige-App (M5, SPÄTER)
+## Schicht 3 — Anzeige-App (M5)
 
 - **Eigenständige App** (Owner-Entscheid a-1) — **kein** dev-gui-Modul; erscheint in dev-gui wie jedes andere Projekt (nur Projekt-Anzeige, kein Träger).
-- **Umfang:** Portfolio-, Verlaufs-, Divergenz- und Gate-Ansicht. Ab M5 wandert das Gate von CLI/Chat in diese UI (ADR-005).
-- **Read-model-Boundary:** die App liest die Datenschicht als **Lesemodell** und enthält **keine** Bewertungs-/Orchestrierungslogik (die lebt in Schicht 1). Ob sie SQLite direkt liest oder über einen Export/Read-API-Vertrag, hängt am Stack → Offene Fragen F-1/F-4.
-- **Stack OFFEN** (Flutter vs. Angular vs. HTML/JS) → Offene Fragen F-1. Bis zum Entscheid bleibt `app/` leer; Profil-`frameworks`/`db_dialect` werden dann per `architekt`/`/adopt`-Re-Run gesetzt.
+- **Umfang:** Portfolio-, Verlaufs-, Divergenz- und Gate-Ansicht. Ab M5 wandert das Gate von CLI/Chat in diese UI (ADR-005) — der **Schreibweg** der Gate-Aktion ist noch offen (ADR-011), die **Leseseite** (S-021, AC4/AC5) ist davon unabhängig.
+- **Stack ENTSCHIEDEN (ADR-007):** statisches HTML5 + CSS + Vanilla-JS, **kein** Framework, **kein** Build-Step. Visuelle Ausprägung: [`docs/design.md`](design.md) (owner-freigegeben 2026-07-30) — bindend.
+- **Betriebsmodell:** `app/index.html` wird lokal im Browser geöffnet (`file://`, Doppelklick). **Kein Server-Prozess**, kein Deployment, keine Auth, kein Netzwerkzugriff (C-002/C-004, `html/R03`).
+- **Read-model-Boundary (aufgelöst, ADR-010):** die App liest `research-app.sqlite` **direkt** — über eine mitgelieferte SQLite-Engine (WASM/asm.js) im Browser. Die DB-Datei wird vom Nutzer per **Datei-Auswahl** übergeben und als **In-Memory-Lesekopie** geöffnet. Kein Export-Artefakt, kein Read-API-Prozess, keine Bewertungs-/Orchestrierungslogik in der App (die lebt in Schicht 1).
+
+### Bindende Umsetzungs-Constraints der Anzeige (prüfbar — Verstoss = Review-Blocker)
+
+| ID | Constraint |
+|---|---|
+| **UI-C1** | **Keine Netzwerk-Abhängigkeit.** Alle Assets (SQLite-Engine, CSS, Schriften, Icons) liegen unter `app/`; kein CDN, kein Request gegen einen entfernten Host (`html/R03`). Smoke: WLAN aus → Dashboard voll funktionsfähig. |
+| **UI-C2** | **`file://`-Tauglichkeit.** Die Seite muss per Doppelklick auf `app/index.html` laufen. Daraus folgt hart: **keine ES-Module** (`<script type="module">`) und **kein `fetch()`/`XMLHttpRequest` auf lokale Dateien** — beides blockieren die Browser unter `file://` per Origin-Regel. Nur klassische `<script src>`/`<link href>`-Einbindungen. Die SQLite-Engine muss ohne Nachladen eines separaten Binaries starten (asm.js-Build **oder** base64-inline-WASM); welche Variante, verifiziert der `coder` per Smoke-Test, nicht per Annahme. |
+| **UI-C3** | **DB-Zugang nur über Nutzer-Auswahl.** `<input type="file">` (optional zusätzlich Drag&Drop) → Bytes in den Speicher. Kein hart kodierter Dateipfad, keine Pfad-Heuristik. |
+| **UI-C4** | **Read-only by construction.** Die geöffnete DB ist eine Speicherkopie und wird nie zurückgeschrieben (auch kein Download/Export der DB-Datei). Ausschliesslich `SELECT` — kein `INSERT`/`UPDATE`/`DELETE`/DDL. Damit erfüllt die App AC4 strukturell, nicht nur per Konvention. |
+| **UI-C5** | **Lesemodell allein aus `research-app.sqlite`.** Ein `ATTACH` der last30days-DB ist im Browser nicht möglich. Braucht eine Ansicht ein last30days-Datum, muss **Schicht 1** es beim Lauf in die `ra_*`-Tabellen übernehmen — die Anzeige holt es nie selbst. |
+| **UI-C6** | **Schnappschuss-Semantik sichtbar.** Die Anzeige nennt den Ladezeitpunkt („Stand: …") und bietet erneutes Laden an; sie behauptet nie Live-Aktualität. |
+| **UI-C7** | **Fremdtext nie als HTML.** Alle DB-Werte (u.a. `rationale`, Meilenstein-Texte) werden über `textContent`/Node-APIs gerendert, nie per `innerHTML` — die Freitexte stammen aus Modellausgaben (Security-Floor). |
+| **UI-C8** | **Mitgelieferte Engine mit Provenienz.** Die Engine-Datei liegt unter `app/vendor/` und trägt dokumentiert Version, Lizenz und SHA-256 der Datei. Ein Update ist ein bewusster Commit, kein Paketmanager-Lauf (es gibt keinen Build-Step). |
+
+> **Profil-Nachzug (Owner/`/adopt`, nicht Teil dieser Story):** `.claude/profile.md` führt weiterhin `language: md`. Mit ADR-007 gehören `html`/`css`/`js` in die Sprach-Liste, damit `coder`/`reviewer` die passenden Knowledge-Packs laden. Bis dahin sind `html.md`/`css.md` über `docs/design.md` bindend referenziert.
 
 ## Repo-Struktur / Modul-Schnitt (Code lebt in diesem Repo)
 
@@ -166,7 +183,10 @@ research-app/
 │   └── scripts/         # Orchestrierungs-Pässe (discovery, judge, deep-research,
 │                        #   recommend, prerequisites, businessplan, divergence,
 │                        #   watchlist, gate, pm-handoff, data-access)
-├── app/                 # M5 — Anzeige-App (Stack OFFEN; leer bis M5)
+├── app/                 # M5 — Anzeige (statisch, ADR-007/ADR-010; kein Build-Step)
+│   ├── index.html       #   Einstieg, per Doppelklick lauffähig (UI-C2)
+│   ├── assets/          #   CSS/JS der App (Design-Tokens aus docs/design.md)
+│   └── vendor/          #   mitgelieferte SQLite-Engine + Provenienz (UI-C8)
 └── .claude/             # profile · board · lessons
 ```
 
@@ -184,6 +204,8 @@ research-app/
 - **Idempotenz nachweisbar:** identischer Input (ID+Hash) erzeugt kein Duplikat im Vault (BR-103) — testbar.
 - **Divergenz reproduzierbar:** deterministisch über strukturierte Felder (BR-106).
 - **Boundary-Konformität:** die drei Zugriffsgrenzen (SQLite/last30days/Vault) werden nur von den zuständigen Komponenten überschritten — Review-Blocker.
+- **Anzeige serverlos + offline:** `app/index.html` per Doppelklick geöffnet rendert das Portfolio ohne Netzwerk und ohne zusätzlichen Prozess (Smoke: WLAN aus, kein Terminal-Vorlauf) — UI-C1/UI-C2.
+- **Anzeige schreibfrei:** kein Schreib-Statement und kein Rückschreiben der DB-Datei im Anzeige-Code (`grep` auf `INSERT|UPDATE|DELETE|CREATE|DROP` in `app/` bleibt leer) — UI-C4.
 - **Kostenkontrolle:** kein headless-Lauf ohne Kostenlimit.
 - **Kopplungsminimierung:** keine Abhängigkeit vom **internen** last30days-Schema (nur JSON-Emit + externer Schlüssel).
 
@@ -197,8 +219,19 @@ Format: MADR-knapp (`architecture/R07/R08`) — Confidence + Reevaluations-Trigg
 - **ADR-004 · 2026-07-26 · Idempotenz = stabile Themen-ID + Inhalts-Hash.** Muster gespiegelt aus pm-import (`sync_hash`/`version`, AC6), eine Ebene früher. *Begründung:* konsistentes, bewährtes Idempotenz-Muster der Kette (C-006). *Confidence:* hoch. *Reeval-Trigger:* Kollisionen/Hash-Instabilität in der Praxis.
 - **ADR-005 · 2026-07-26 · Gate manuell, CLI/Chat bis M5.** Bis zur Anzeige-App ist das Entscheidungs-Gate eine CLI-/Chat-Abfrage; ab M5 UI. *Begründung:* Gate nie automatisch (BR-102); Anzeige zuletzt (C-005). *Confidence:* hoch. *Reeval-Trigger:* M5-Anzeige verfügbar.
 - **ADR-006 · OFFEN · Verortung/Verteilung des `/research`-Skills.** Empfehlung: projekt-lokal in `skills/research/` dieses Repos (projektspezifische Orchestrierung, keine wiederverwendbare Fabrik-Capability). Siehe Offene Fragen **F-2**.
-- **ADR-007 · OFFEN · Stack der Anzeige-App (M5).** Flutter vs. Angular vs. HTML/JS. Siehe Offene Fragen **F-1**.
-- **ADR-008 · OFFEN · Physische Kopplung der Bewertungs-Tabellen an die last30days-DB** (selbes File vs. separates File + Referenz). dba + Owner. Siehe Offene Fragen **F-3**.
+- **ADR-007 · 2026-07-26 (hier nachgezogen 2026-07-30) · Stack der Anzeige-App (M5) = statisches HTML/JS.** Owner-Entscheid **b-1** vom 26.07.2026: statisches HTML5 + CSS + Vanilla-JS, **kein** Framework, **kein** Build-Step, kein Server. *Begründung:* Single-User-Lesedashboard mit drei Ansichten (`R04`); Flutter/Angular bringen Toolchain, Build-Pipeline und Framework-Lebenszyklus für einen Umfang, den natives HTML abdeckt. *Verworfen:* Flutter (Desktop-Toolchain + Dart-Build für eine Tabellen-Ansicht), Angular (Node-Build/Dependency-Pflege, widerspricht „kein Build-Step"). *Konsequenz:* `docs/design.md` (owner-freigegeben 2026-07-30) ist die bindende visuelle Ausprägung; die Zugriffsfrage auf SQLite wird dadurch nicht-trivial und ist separat in **ADR-010** entschieden; `profile.language` ist nachzuziehen (s. Schicht 3). *Confidence:* hoch. *Reeval-Trigger:* die Anzeige braucht Mehrbenutzer-/Remote-Betrieb, oder der Vanilla-JS-Umfang wächst über die drei Ansichten hinaus so weit, dass Zustandsverwaltung von Hand fehleranfällig wird.
+- **ADR-008 · 2026-07-27 (hier nachgezogen 2026-07-30) · Bewertungs-Tabellen in eigenem File `research-app.sqlite`, last30days read-only ge-ATTACHt.** Entschieden im Datenmodell (`data-model.md` OF-03) und umgesetzt (Migrationen S-001, `research-datenmodell#AC8`). *Begründung:* schützt die Bewertungsschicht vor einem Plugin-seitigen Neuaufbau der last30days-Datei; deckungsgleich mit der ursprünglichen Architektur-Empfehlung. *Verworfen:* gemeinsames File mit Tabellen-Präfix. *Confidence:* hoch. *Reeval-Trigger:* last30days garantiert Schema-/File-Stabilität, oder Cross-DB-Joins werden im Regelbetrieb nötig.
 - **ADR-009 · 2026-07-29 · PM-Handoff-Aufruf: Skill-Tool-Dispatch durch die aktive Session, kein CLI/Subprocess.** pm-skills ist kein CLI-Tool, sondern ein Satz Claude-Code-Skills/Sub-Agenten (`SKILL.md`, kein `bin`-Entry-Point). Der PM-Handoff-Pass ruft pm-skills daher **nie** aus einem eigenständigen Bash-Prozess (`orchestrator.sh`) heraus auf, sondern über das Skill-Tool derselben Claude-Session, die bereits das `/research`-Skill ausführt und die Gate-Wahl (AC1) entgegengenommen hat. `orchestrator.sh` übernimmt ausschliesslich das deterministische Bookkeeping (Idempotenz-Dispatch, Status-Transition) und erhält die Vault-Artefakt-Referenz als Eingabeparameter von der aufrufenden Session — es ermittelt sie nie selbst. *Begründung:* verifiziert gegen die installierte pm-skills-Plugin-Version — kein CLI-Interface vorhanden, nur Skill-Dateien; ein Bash-Skript kann eine Skill-Tool-Dispatch-Kette nicht wie ein CLI-Programm aufrufen (gate-pm-anstoss.md AC2). *Verworfen:* ein erfundenes pm-skills-CLI-Interface (`pm-skills generate --vault-path …`) — existiert nicht und wäre ein Fork-Risiko (widerspricht C-004 „pm-skills bleibt unverändert"). *Confidence:* hoch. *Reeval-Trigger:* pm-skills veröffentlicht ein offizielles CLI/npm-Paket mit Kommandozeilen-Interface, oder headless-Automatisierung (ADR-005-Reeval) macht einen `claude -p`-Dispatch (analog `board-feature-drain.sh#generate_dossier`) zur Regel statt zur späteren Ausnahme.
+- **ADR-010 · 2026-07-30 · SQLite-Zugriff der Anzeige: mitgelieferte SQLite-Engine im Browser + Nutzer-Datei-Auswahl, In-Memory-Lesekopie.**
+  *Kontext/Problem:* AC4 verlangt direktes Lesen aus `research-app.sqlite`; ADR-007/AC5 verlangen statisches HTML/JS ohne Build-Step; `html/R03` verlangt offline-first ohne CDN. Eine `file://`-Seite kann aber weder eine Datei über einen Pfad öffnen noch `fetch()` auf lokale Dateien ausführen — der Zugriffsmechanismus muss also explizit entschieden werden (Auslöser: S-021 blockiert, Spec-Lücke).
+  *Entscheidung:* eine unter `app/vendor/` **mitgelieferte** SQLite-Engine (SQLite als WASM/asm.js, z.B. sql.js) läuft im Browser; der Nutzer übergibt die DB-Datei per Datei-Auswahl; die Bytes werden als **In-Memory-Lesekopie** geöffnet und ausschliesslich mit `SELECT` abgefragt. Bindende Constraints: **UI-C1..UI-C8** (Schicht 3).
+  *Erwogen und verworfen:*
+  (a) **Lokaler Server-Prozess** (`python3 -m http.server` oder Mini-Read-API): löst die Origin-Beschränkungen und könnte später auch den Gate-Schreibweg tragen — verworfen für den Regelbetrieb, weil er eine zweite Laufzeit und ein Start-Ritual vor jedem Blick aufs Dashboard einführt (widerspricht „leichtgewichtiges lokales Dashboard ohne Build-Step", AC5/`design.md`) und eine Read-API zur Leckstelle für Bewertungslogik würde (`R01`). **Klarstellung:** die Doku verbietet einen lokalen Prozess nicht wörtlich — C-004 verbietet Deployment, Auth und Mehrbenutzer-Betrieb; die Ablehnung ist eine KISS-Abwägung (`R04`), kein Verbot. Damit bleibt (a) der **erste Kandidat**, falls ADR-011 ohnehin einen Prozess erzwingt.
+  (b) **File System Access API** (`showOpenFilePicker` + persistenter Handle): bequemer, weil die Datei nicht je Sitzung neu gewählt werden müsste — als **Basis** zu schmal: im Wesentlichen Chromium-only (Safari/Firefox bieten die Auswahl auf dem echten Dateisystem nicht), zusätzlich an Secure-Context- und Gesten-Regeln gebunden. Später als reine Bequemlichkeits-Ergänzung zulässig, aber nur mit Feature-Detection, nie als einziger Zugangsweg und nie mit Schreibrecht.
+  (c) **Export-Artefakt** (Schicht 1 erzeugt eine JSON-/JS-Datei, die Seite lädt sie per `<script>`): technisch am einfachsten unter `file://` — verworfen, weil es AC4 („direkt aus `research-app.sqlite`") verletzt, vor jedem Blick einen Export-/Build-Schritt erzwingt und eine zweite Schema-Wahrheit neben `data-model.md` schafft.
+  (d) **Offizielles sqlite.org-WASM mit OPFS-Backend:** OPFS ist ein Browser-Sandbox-Speicher, nicht die Datei auf der Platte, und die Auslieferung setzt ES-Module bzw. COOP/COEP-Header (also einen Server) voraus — passt weder zu UI-C2 noch zum serverlosen Betrieb.
+  *Konsequenzen:* die Ansicht ist ein **Schnappschuss** (UI-C6) · **kein `ATTACH`** der last30days-DB möglich, nötige Fremddaten muss Schicht 1 in die `ra_*`-Tabellen übernehmen (UI-C5) · Read-only ist **strukturell** garantiert (UI-C4) · eine Engine-Datei wird ins Repo vendored (UI-C8) · die DB muss je Sitzung ausgewählt werden · **es entsteht kein Schreibpfad** — die Gate-Aktion (AC3) ist damit ausdrücklich **nicht** gelöst (→ ADR-011).
+  *Confidence:* hoch für die Leseseite (AC1/AC2/AC4). *Reeval-Trigger:* ADR-011 entscheidet sich für einen lokalen Prozess (dann kann die Leseseite auf `http://localhost` umziehen und die Engine regulär per WASM-Streaming laden) · Safari/Firefox liefern die Datei-Auswahl-API cross-browser · die DB wächst so weit, dass eine Vollkopie im Speicher spürbar träge wird.
+- **ADR-011 · OFFEN · Schreibweg der Gate-Aktion aus der serverlosen Anzeige (AC3, ADR-005).** Aus ADR-010 folgt: die Seite kann Schicht 1 nicht direkt aufrufen. Kandidaten: **(a)** die Anzeige zeigt den fertigen Befehl zum Kopieren, ausgeführt wird im Terminal — „klickbar" degradiert zu „kopierbar", dafür kein neuer Mechanismus (**Empfehlung**, `R04`); **(b)** Gate-Intent-Datei via File System Access API, aufgenommen von einem Schicht-1-Pass — asynchrone Warteschlange, Chromium-only; **(c)** minimaler lokaler HTTP-Endpunkt nur für die Gate-Aktion — kehrt die Server-Ablehnung aus ADR-010 teilweise um und zieht die Leseseite ggf. mit. **Owner-Entscheid nötig, bevor die AC3-Story startet.** S-021 (AC4/AC5) ist davon **nicht** betroffen.
 
-> **Offene Architektur-Entscheide** (ADR-006..008) sind bewusst nicht final gesetzt — der Katalog steht in der Rückgabe des `architekt`-Laufs (Stufe-b) und wird nach Owner-Entscheid hier als akzeptierte ADR nachgezogen.
+> **Offene Architektur-Entscheide:** **ADR-006** (Skill-Verortung) und **ADR-011** (Gate-Schreibweg) sind bewusst nicht final gesetzt und brauchen einen Owner-Entscheid; sie werden danach hier als akzeptierte ADR nachgezogen. **ADR-007** und **ADR-008** sind entschieden (b-1 bzw. OF-03) und oben nachgetragen.
