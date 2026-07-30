@@ -1,7 +1,7 @@
 /* research-app — Anzeige-Ebene, Design-Tokens gemäss docs/design.md (owner-freigegeben).
    Grundgerüst (S-021, AC5) + Portfolio-Ansicht (S-022, AC1): Status-/Empfehlungs-/
-   Momentum-Tokens und die Portfolio-Tabelle. Divergenz-Delta-Tokens folgen der
-   Verlaufs-/Divergenz-Story (AC2). */
+   Momentum-Tokens und die Portfolio-Tabelle. Verlauf & Divergenz-Ansicht
+   (S-023, AC2): Divergenz-Delta-Tokens, Lauf-Zeitleiste, Divergenz-Auswahl. */
 
 :root {
   /* Neutrals (design.md #Farb-Tokens) */
@@ -28,6 +28,10 @@
 
   /* Momentum-Kennzeichen (AC1, BR-104/momentum_only) */
   --color-momentum-bg: #E0E7FF; --color-momentum-fg: #3730A3;
+
+  /* Divergenz-Delta (AC2) */
+  --color-delta-added:   #166534;
+  --color-delta-removed: #991B1B;
 
   /* Zustand / Feedback */
   --color-danger:      #B91C1C;
@@ -59,6 +63,11 @@ body {
 }
 
 .app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-4);
   padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--color-border);
 }
@@ -69,6 +78,17 @@ body {
   line-height: 1.25;
   font-weight: 600;
   text-wrap: balance;
+}
+
+.active-view-label {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.app-nav {
+  display: flex;
+  gap: var(--space-2);
 }
 
 .app-main {
@@ -135,6 +155,12 @@ body {
 
 .button:hover {
   filter: brightness(0.92);
+}
+
+.button-secondary {
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
 }
 
 .status-line {
@@ -265,6 +291,103 @@ body {
   .portfolio-table td[data-label]::before {
     content: none;
   }
+}
+
+/* Lauf-Verlauf + Divergenz-Ansicht (AC2, design.md #Grundkomponenten 5) */
+.run-timeline {
+  list-style: none;
+  margin: 0 0 var(--space-6);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.run-timeline-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.divergence-selectors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.divergence-selectors label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.divergence-select {
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 16px;
+}
+
+.divergence-panel {
+  margin-top: var(--space-4);
+}
+
+.divergence-recommendation-change {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+
+.swot-delta,
+.milestone-delta {
+  margin: 0 0 var(--space-5);
+}
+
+.swot-delta h4,
+.milestone-delta h4 {
+  margin: 0 0 var(--space-2);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.delta-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.delta-item {
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+.delta-added { color: var(--color-delta-added); }
+.delta-removed { color: var(--color-delta-removed); }
+
+.delta-rollup {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: 14px;
 }
 
 :focus-visible {

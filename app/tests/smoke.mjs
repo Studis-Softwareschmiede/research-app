@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Smoke-Test — Anzeige-Ebene Grundgerüst + Lesemodell (S-021) + Portfolio-Ansicht (S-022).
+// Smoke-Test — Anzeige-Ebene Grundgerüst + Lesemodell (S-021) + Portfolio-Ansicht
+// (S-022) + Verlauf & Divergenz-Ansicht (S-023).
 // Treibt echtes, headless Chrome per Chrome DevTools Protocol (CDP) gegen
-// app/index.html unter file:// (UI-C2) und prüft AC1/AC4/AC5 end-to-end.
+// app/index.html unter file:// (UI-C2) und prüft AC1/AC2/AC4/AC5 end-to-end.
 // Keine npm-Abhängigkeit (nur Node-Builtins: fetch/WebSocket/child_process/
 // node:sqlite fehlt hier absichtlich — Fixtures werden über die `sqlite3`-CLI
 // erzeugt, dieselbe Abhängigkeit, die db_scripts/ bereits voraussetzt).
@@ -14,19 +15,29 @@
 // inkl. `im_pm` -> "im PM"-Mapping, letzter Bewertung [Empfehlungs-Badge +
 // Momentum-Kennzeichen bei momentum_only=1, "Noch keine Bewertung" ohne Lauf]
 // und offenen Meilensteinen [Zahl + <details>-Expand-Liste, 0 ohne Expand],
-// Zeilen fokussierbar [tabindex-fähig, design.md #Grundkomponenten 4 —
-// Klick-/Enter-Navigation zum Thema-Detail folgt erst mit AC2/S-023] —
-// sortiert nach letzter Aktualisierung absteigend), AC4 (Lesemodell-Boundary —
-// direktes Lesen von research-app.sqlite als In-Memory-Lesekopie,
-// ausschliesslich SELECT, Schnappschuss-Zustand E1/E3 — E3 mit je eigener
-// Fixture pro Teilbedingung: (a) kein gültiges SQLite, (b) gültiges SQLite
-// ohne ra_*-Tabellen —, read-only-by-construction per Byte-Vergleich der
-// Quelldatei vor/nach dem Lesen), AC5 (Stack — lädt per file:// ohne
-// Netzwerk-Request ausserhalb von file://, kein ES-Modul/`type="module"`
-// nötig für die Ausführung dieses Tests selbst — der Browser-Code bleibt
-// klassisches Script, s. app/assets/app.js). AC2/AC3 sind nicht Teil dieser
-// Story (Verlauf/Divergenz bzw. Gate-Aktion, spätere Stories) und daher hier
-// nicht getestet.
+// Zeilen fokussierbar [tabindex-fähig, design.md #Grundkomponenten 4] —
+// sortiert nach letzter Aktualisierung absteigend), AC2 (Verlauf &
+// Divergenz-Ansicht — Zeilen-Klick UND Enter-Taste navigieren zum
+// Thema-Detail [design.md #Grundkomponenten 4, Klick auf die Meilenstein-
+// Expand navigiert NICHT mit], Lauf-Verlauf zeigt alle Läufe neuester zuerst,
+// Divergenz-Auswahl mit Default neuester-vs-Vorgänger, Divergenz-Panel liest
+// ra_divergence [Empfehlungs-Wechsel "X → Y", SWOT-Delta mit +/−-Präfix je
+// Kategorie + Kategorie-Rollup, Meilenstein-Delta] ohne eigene Berechnung,
+// Laufpaar ohne materialisierte ra_divergence-Zeile zeigt Hinweis statt
+// eigener Berechnung, Default-Auswahl vergleicht bei einem Thema mit
+// PM-Historie (neuester Lauf kind='pm') trotzdem die zwei letzten echten
+// kind='recherche'-Läufe statt der zeitlich letzten zwei Läufe überhaupt
+// [BR-011, „derselben Art"], Rücksprung zum Portfolio über die
+// Header-Navigation, Hinweis statt Fehler bei nur einem Lauf), AC4 (Lesemodell-Boundary — direktes Lesen von
+// research-app.sqlite als In-Memory-Lesekopie, ausschliesslich SELECT,
+// Schnappschuss-Zustand E1/E3 — E3 mit je eigener Fixture pro Teilbedingung:
+// (a) kein gültiges SQLite, (b) gültiges SQLite ohne ra_*-Tabellen —,
+// read-only-by-construction per Byte-Vergleich der Quelldatei vor/nach dem
+// Lesen), AC5 (Stack — lädt per file:// ohne Netzwerk-Request ausserhalb von
+// file://, kein ES-Modul/`type="module"` nötig für die Ausführung dieses
+// Tests selbst — der Browser-Code bleibt klassisches Script, s.
+// app/assets/app.js). AC3 ist nicht Teil dieser Story (Gate-Aktion, blockiert
+// auf ADR-011) und daher hier nicht getestet.
 
 import { spawn, execFileSync } from "node:child_process";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
@@ -88,17 +99,21 @@ async function main() {
   const invalidDb = join(fixtureDir, "invalid.sqlite");
   const noRaTablesDb = join(fixtureDir, "no-ra-tables.sqlite");
   const portfolioDb = join(fixtureDir, "portfolio.sqlite");
+  const historyDb = join(fixtureDir, "history.sqlite");
+  const singleRunDb = join(fixtureDir, "single-run.sqlite");
+  const pmHistoryDb = join(fixtureDir, "pm-history.sqlite");
 
   const RA_SCHEMA =
     "CREATE TABLE ra_topic (id TEXT PRIMARY KEY, title TEXT, status TEXT, updated_at TEXT); " +
-    "CREATE TABLE ra_run (id INTEGER PRIMARY KEY, topic_id TEXT, recommendation TEXT, momentum_only INTEGER); " +
-    "CREATE TABLE ra_milestone (id INTEGER PRIMARY KEY, topic_id TEXT, description TEXT, status TEXT, created_at TEXT); ";
+    "CREATE TABLE ra_run (id INTEGER PRIMARY KEY, topic_id TEXT, kind TEXT, version INTEGER, recommendation TEXT, momentum_only INTEGER, created_at TEXT); " +
+    "CREATE TABLE ra_milestone (id INTEGER PRIMARY KEY, topic_id TEXT, description TEXT, status TEXT, created_at TEXT); " +
+    "CREATE TABLE ra_divergence (id INTEGER PRIMARY KEY, topic_id TEXT, kind TEXT, from_run_id INTEGER, to_run_id INTEGER, is_empty INTEGER, recommendation_changed INTEGER, swot_delta TEXT, milestone_status_delta TEXT, computed_at TEXT); ";
 
   execFileSync("sqlite3", [
     validDb,
     RA_SCHEMA +
       "INSERT INTO ra_topic VALUES ('t1','Thema Eins','aktiv','2026-07-20 10:00:00'); " +
-      "INSERT INTO ra_run VALUES (1,'t1','weiterverfolgen',0); " +
+      "INSERT INTO ra_run (id, topic_id, recommendation, momentum_only) VALUES (1,'t1','weiterverfolgen',0); " +
       "INSERT INTO ra_milestone VALUES (1,'t1','Externe Finanzierung sichern','offen','2026-07-20 10:05:00'); " +
       "INSERT INTO ra_milestone VALUES (2,'t1','Prototyp bauen','offen','2026-07-20 10:06:00'); " +
       "INSERT INTO ra_milestone VALUES (3,'t1','Altes Ziel','erfuellt','2026-07-20 10:07:00');",
@@ -111,13 +126,46 @@ async function main() {
       "INSERT INTO ra_topic VALUES ('b','PM-Thema','im_pm','2026-07-22 09:00:00'); " +
       "INSERT INTO ra_topic VALUES ('c','Ohne Bewertung','aktiv','2026-07-19 09:00:00'); " +
       "INSERT INTO ra_topic VALUES ('d','Verworfenes Thema','verworfen','2026-07-18 09:00:00'); " +
-      "INSERT INTO ra_run VALUES (1,'a','parken',1); " +
-      "INSERT INTO ra_run VALUES (2,'b','weiterverfolgen',0);",
+      "INSERT INTO ra_run (id, topic_id, recommendation, momentum_only) VALUES (1,'a','parken',1); " +
+      "INSERT INTO ra_run (id, topic_id, recommendation, momentum_only) VALUES (2,'b','weiterverfolgen',0);",
   ]);
   await (await import("node:fs/promises")).writeFile(invalidDb, "keine echte sqlite-datei\n");
   execFileSync("sqlite3", [
     noRaTablesDb,
     "CREATE TABLE unrelated (id TEXT PRIMARY KEY);",
+  ]);
+  execFileSync("sqlite3", [
+    historyDb,
+    RA_SCHEMA +
+      "INSERT INTO ra_topic VALUES ('h1','Verlaufs-Thema','aktiv','2026-07-20 08:00:00'); " +
+      "INSERT INTO ra_run (id, topic_id, kind, version, recommendation, momentum_only, created_at) VALUES (0,'h1','recherche',0,'parken',0,'2026-07-01 08:00:00'); " +
+      "INSERT INTO ra_run (id, topic_id, kind, version, recommendation, momentum_only, created_at) VALUES (1,'h1','recherche',1,'parken',0,'2026-07-10 08:00:00'); " +
+      "INSERT INTO ra_run (id, topic_id, kind, version, recommendation, momentum_only, created_at) VALUES (2,'h1','recherche',2,'weiterverfolgen',1,'2026-07-20 08:00:00'); " +
+      "INSERT INTO ra_milestone (id, topic_id, description, status, created_at) VALUES (1,'h1','Standort finalisieren','offen','2026-07-19 08:00:00'); " +
+      "INSERT INTO ra_divergence (id, topic_id, kind, from_run_id, to_run_id, is_empty, recommendation_changed, swot_delta, milestone_status_delta, computed_at) VALUES (" +
+      "1,'h1','recherche',1,2,0,1," +
+      "'{\"added\":[[\"opportunity\",\"neuer_markt\"]],\"removed\":[[\"threat\",\"alter_wettbewerber\"]],\"by_category\":{\"opportunity\":{\"added\":1,\"removed\":0},\"threat\":{\"added\":0,\"removed\":1}}}'," +
+      "'{\"changed\":[{\"milestone_stable_key\":\"finanzierung\",\"from_status\":\"offen\",\"to_status\":\"erfuellt\"}]}'," +
+      "'2026-07-20 08:00:01');",
+  ]);
+  execFileSync("sqlite3", [
+    singleRunDb,
+    RA_SCHEMA +
+      "INSERT INTO ra_topic VALUES ('h2','Einzel-Lauf-Thema','aktiv','2026-07-15 08:00:00'); " +
+      "INSERT INTO ra_run (id, topic_id, kind, version, recommendation, momentum_only, created_at) VALUES (3,'h2','recherche',1,'parken',0,'2026-07-15 08:00:00');",
+  ]);
+  execFileSync("sqlite3", [
+    pmHistoryDb,
+    RA_SCHEMA +
+      "INSERT INTO ra_topic VALUES ('h3','PM-Verlaufs-Thema','im_pm','2026-06-20 08:00:00'); " +
+      "INSERT INTO ra_run (id, topic_id, kind, version, recommendation, momentum_only, created_at) VALUES (30,'h3','recherche',0,'parken',0,'2026-06-01 08:00:00'); " +
+      "INSERT INTO ra_run (id, topic_id, kind, version, recommendation, momentum_only, created_at) VALUES (31,'h3','recherche',1,'weiterverfolgen',0,'2026-06-10 08:00:00'); " +
+      "INSERT INTO ra_run (id, topic_id, kind, version, recommendation, momentum_only, created_at) VALUES (32,'h3','pm',2,'weiterverfolgen',0,'2026-06-20 08:00:00'); " +
+      "INSERT INTO ra_divergence (id, topic_id, kind, from_run_id, to_run_id, is_empty, recommendation_changed, swot_delta, milestone_status_delta, computed_at) VALUES (" +
+      "2,'h3','recherche',30,31,0,1," +
+      "'{\"added\":[[\"opportunity\",\"pm_vorlauf_test\"]],\"removed\":[],\"by_category\":{\"opportunity\":{\"added\":1,\"removed\":0}}}'," +
+      "NULL," +
+      "'2026-06-10 08:00:01');",
   ]);
 
   const validBefore = sha256(await readFile(validDb));
@@ -308,6 +356,148 @@ async function main() {
       "AC1",
       "0 offene Meilensteine zeigen die Zahl '0' ohne Expand",
       portfolioRows.every((r) => r.milestones === "0")
+    );
+
+    await selectFile(historyDb);
+
+    const detailsClickResult = await evalExpr(
+      "(function(){var summary=document.querySelector('.portfolio-table tbody tr summary');" +
+        "if(!summary) return null;" +
+        "summary.click();" +
+        "return document.querySelector('#state-region h2').textContent;})()"
+    );
+    check(
+      "AC2",
+      "Klick auf die Meilenstein-Expand navigiert NICHT zum Thema-Detail",
+      detailsClickResult === "Portfolio"
+    );
+
+    await evalExpr(
+      "(function(){var tr=document.querySelector('.portfolio-table tbody tr');" +
+        "tr.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true}));})()"
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    const enterNavHeading = await evalExpr("document.querySelector('#state-region h2').textContent");
+    check(
+      "AC2",
+      "Enter-Taste auf der fokussierten Zeile navigiert zum Thema-Detail",
+      enterNavHeading === "Verlaufs-Thema"
+    );
+
+    const timelineLabels = await evalExpr(
+      "Array.from(document.querySelectorAll('.run-timeline-item')).map(function(li){return li.textContent;})"
+    );
+    check(
+      "AC2",
+      "Lauf-Verlauf zeigt alle Läufe, neuester zuerst",
+      timelineLabels.length === 3 &&
+        timelineLabels[0].indexOf("V2") !== -1 &&
+        timelineLabels[1].indexOf("V1") !== -1 &&
+        timelineLabels[2].indexOf("V0") !== -1
+    );
+
+    const defaultDivergence = await evalExpr(
+      "(function(){var p=document.querySelector('.divergence-panel');" +
+        "var added=p.querySelector('.delta-added');" +
+        "var removed=p.querySelector('.delta-removed');" +
+        "var milestoneList=p.querySelector('.milestone-delta ul');" +
+        "var rollup=p.querySelector('.delta-rollup');" +
+        "return {" +
+        "hasChange: !!p.querySelector('.divergence-recommendation-change')," +
+        "addedText: added ? added.textContent : ''," +
+        "removedText: removed ? removed.textContent : ''," +
+        "milestoneText: milestoneList ? milestoneList.textContent : ''," +
+        "rollupItems: rollup ? Array.from(rollup.children).map(function(li){return li.textContent;}) : []" +
+        "};})()"
+    );
+    check(
+      "AC2",
+      "Divergenz-Panel zeigt (Default neuester-vs-Vorgänger) den Empfehlungs-Wechsel",
+      defaultDivergence.hasChange === true
+    );
+    check(
+      "AC2",
+      "SWOT-Delta zeigt hinzugekommenen Claim mit '+'-Präfix",
+      defaultDivergence.addedText.indexOf("+ opportunity: neuer_markt") !== -1
+    );
+    check(
+      "AC2",
+      "SWOT-Delta zeigt entfallenen Claim mit '−'-Präfix",
+      defaultDivergence.removedText.indexOf("− threat: alter_wettbewerber") !== -1
+    );
+    check(
+      "AC2",
+      "Meilenstein-Delta zeigt geändertes (Meilenstein, Status)-Paar",
+      defaultDivergence.milestoneText.indexOf("finanzierung") !== -1
+    );
+    check(
+      "AC2",
+      "SWOT-Delta zeigt Kategorie-Rollup mit Zählung je Kategorie",
+      defaultDivergence.rollupItems.length === 2 &&
+        defaultDivergence.rollupItems.includes("opportunity: +1 / −0") &&
+        defaultDivergence.rollupItems.includes("threat: +0 / −1")
+    );
+
+    await evalExpr(
+      "(function(){var sel=document.querySelectorAll('.divergence-select');" +
+        "sel[0].value='0'; sel[1].value='1';" +
+        "sel[0].dispatchEvent(new Event('change'));})()"
+    );
+    const noMaterializedNote = await evalExpr("document.querySelector('.divergence-panel').textContent");
+    check(
+      "AC2",
+      "Laufpaar ohne materialisierte ra_divergence-Zeile zeigt Hinweis statt eigener Berechnung",
+      noMaterializedNote.indexOf("Keine Divergenz-Daten für diese Kombination") !== -1
+    );
+
+    await evalExpr("document.getElementById('nav-portfolio').click()");
+    await new Promise((r) => setTimeout(r, 200));
+    const backHeading = await evalExpr("document.querySelector('#state-region h2').textContent");
+    check("AC2", "Header-Navigation führt zurück zum Portfolio", backHeading === "Portfolio");
+
+    await evalExpr("document.querySelector('.portfolio-table tbody tr').click()");
+    await new Promise((r) => setTimeout(r, 300));
+    const clickNavHeading = await evalExpr("document.querySelector('#state-region h2').textContent");
+    check("AC2", "Zeilen-Klick navigiert zum Thema-Detail", clickNavHeading === "Verlaufs-Thema");
+
+    await evalExpr("document.getElementById('nav-portfolio').click()");
+
+    await selectFile(singleRunDb);
+    await evalExpr("document.querySelector('.portfolio-table tbody tr').click()");
+    await new Promise((r) => setTimeout(r, 300));
+    const singleRunNote = await evalExpr("document.querySelector('.divergence-section').textContent");
+    check(
+      "AC2",
+      "Mit nur einem Lauf zeigt die Divergenz-Ansicht einen Hinweis statt eines Fehlers",
+      singleRunNote.indexOf("mindestens zwei Läufe") !== -1
+    );
+
+    await evalExpr("document.getElementById('nav-portfolio').click()");
+
+    await selectFile(pmHistoryDb);
+    await evalExpr("document.querySelector('.portfolio-table tbody tr').click()");
+    await new Promise((r) => setTimeout(r, 300));
+    const pmHistoryDefault = await evalExpr(
+      "(function(){var sel=document.querySelectorAll('.divergence-select');" +
+        "var p=document.querySelector('.divergence-panel');" +
+        "var added=p.querySelector('.delta-added');" +
+        "return {" +
+        "fromValue: sel[0].value," +
+        "toValue: sel[1].value," +
+        "panelText: p.textContent," +
+        "addedText: added ? added.textContent : ''" +
+        "};})()"
+    );
+    check(
+      "AC2",
+      "Default-Auswahl vergleicht bei einem Thema mit PM-Historie trotzdem die zwei letzten echten Recherche-Läufe (nicht den zeitlich letzten PM-Lauf)",
+      pmHistoryDefault.fromValue === "30" && pmHistoryDefault.toValue === "31"
+    );
+    check(
+      "AC2",
+      "Divergenz-Panel zeigt für dieses Recherche-Laufpaar echte Daten statt 'keine Divergenz-Daten'",
+      pmHistoryDefault.panelText.indexOf("Keine Divergenz-Daten für diese Kombination") === -1 &&
+        pmHistoryDefault.addedText.indexOf("+ opportunity: pm_vorlauf_test") !== -1
     );
 
     check("AC4", "kein unbehandelter Laufzeitfehler während aller Ladevorgänge", consoleErrors.length === 0);
